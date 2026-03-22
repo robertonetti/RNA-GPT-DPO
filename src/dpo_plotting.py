@@ -6,66 +6,72 @@ from typing import Dict, List, Any
 import matplotlib.pyplot as plt
 
 
-def _plot_violin_panel(
+def _plot_current_epoch_histogram(
     ax,
-    epochs: List[int],
-    good_distributions: List[List[float]],
-    bad_distributions: List[List[float]],
-    pearson_values: List[float],
+    good_distribution: List[float],
+    bad_distribution: List[float],
+    pearson_value: float,
     title: str,
 ) -> None:
-    good_positions = [e for e in epochs]
-    bad_positions = [e for e in epochs]
+    has_good = len(good_distribution) > 0
+    has_bad = len(bad_distribution) > 0
 
-    if len(good_distributions) > 0 and all(len(d) > 0 for d in good_distributions):
-        violin_good = ax.violinplot(
-            good_distributions,
-            positions=good_positions,
-            widths=0.32,
-            showmeans=False,
-            showmedians=True,
+    if has_good:
+        ax.hist(
+            good_distribution,
+            bins=30,
+            alpha=0.45,
+            color="tab:blue",
+            edgecolor="black",
+            linewidth=0.5,
+            label="Good NLL",
         )
-        for body in violin_good["bodies"]:
-            body.set_facecolor("tab:blue")
-            body.set_edgecolor("black")
-            body.set_alpha(0.35)
-        violin_good["cmedians"].set_color("tab:blue")
 
-    if len(bad_distributions) > 0 and all(len(d) > 0 for d in bad_distributions):
-        violin_bad = ax.violinplot(
-            bad_distributions,
-            positions=bad_positions,
-            widths=0.32,
-            showmeans=False,
-            showmedians=True,
+    if has_bad:
+        ax.hist(
+            bad_distribution,
+            bins=30,
+            alpha=0.45,
+            color="tab:orange",
+            edgecolor="black",
+            linewidth=0.5,
+            label="Bad NLL",
         )
-        for body in violin_bad["bodies"]:
-            body.set_facecolor("tab:orange")
-            body.set_edgecolor("black")
-            body.set_alpha(0.35)
-        violin_bad["cmedians"].set_color("tab:orange")
 
-    for e, pearson_r, g_dist, b_dist in zip(epochs, pearson_values, good_distributions, bad_distributions):
-        if len(g_dist) == 0 and len(b_dist) == 0:
-            continue
-        if len(g_dist) > 0 and len(b_dist) > 0:
-            local_max = max(g_dist + b_dist)
-        elif len(g_dist) > 0:
-            local_max = max(g_dist)
+    if has_good or has_bad:
+        if pearson_value == pearson_value:
+            pearson_text = f"Pearson = {pearson_value:.3f}"
         else:
-            local_max = max(b_dist)
-        label_txt = f"pearson={pearson_r:.3f}" if pearson_r == pearson_r else "pearson=nan"
-        ax.text(e, local_max + 0.03, label_txt, ha="center", va="bottom", fontsize=11, fontweight="bold")
-
-    ax.plot([], [], color="tab:blue", linewidth=8, alpha=0.35, label="Good NLL")
-    ax.plot([], [], color="tab:orange", linewidth=8, alpha=0.35, label="Bad NLL")
+            pearson_text = "Pearson = nan"
+        ax.text(
+            0.02,
+            0.98,
+            pearson_text,
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=12,
+            fontweight="bold",
+            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
+        )
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No data available",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=12,
+            fontweight="bold",
+        )
 
     ax.set_title(title)
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Per-sequence NLL (model)")
-    ax.set_xticks(epochs)
+    ax.set_xlabel("Per-sequence NLL (model)")
+    ax.set_ylabel("Count")
     ax.grid(alpha=0.3)
-    ax.legend(loc="best")
+    if has_good or has_bad:
+        ax.legend(loc="best")
 
 
 def save_epoch_figures(history: Dict[str, List[Any]], main_path: Path, violin_path: Path) -> None:
@@ -136,33 +142,31 @@ def save_epoch_figures(history: Dict[str, List[Any]], main_path: Path, violin_pa
     fig_main.savefig(main_path, dpi=140, bbox_inches="tight")
     plt.close(fig_main)
 
-    fig_violin, axes_violin = plt.subplots(1, 3, figsize=(24, 6))
+    current_epoch = epochs[-1]
 
-    _plot_violin_panel(
-        axes_violin[0],
-        epochs,
-        history["val_good_seq_nll"],
-        history["val_bad_seq_nll"],
-        history["val_sep_corr"],
-        "Validation NLL Distributions by Epoch (Good vs Bad)",
+    fig_hist, axes_hist = plt.subplots(1, 3, figsize=(24, 6))
+    _plot_current_epoch_histogram(
+        axes_hist[0],
+        history["val_good_seq_nll"][-1],
+        history["val_bad_seq_nll"][-1],
+        history["val_sep_corr"][-1],
+        title=f"Validation NLL Histogram - Epoch {current_epoch}",
     )
-    _plot_violin_panel(
-        axes_violin[1],
-        epochs,
-        history["vae_good_seq_nll"],
-        history["vae_bad_seq_nll"],
-        history["vae_sep_corr"],
-        "VAE Dist 25-30 Split NLL Distributions by Epoch (Good vs Bad)",
+    _plot_current_epoch_histogram(
+        axes_hist[1],
+        history["vae_good_seq_nll"][-1],
+        history["vae_bad_seq_nll"][-1],
+        history["vae_sep_corr"][-1],
+        title=f"VAE Dist 25-30 NLL Histogram - Epoch {current_epoch}",
     )
-    _plot_violin_panel(
-        axes_violin[2],
-        epochs,
-        history["dist2530_good_seq_nll"],
-        history["dist2530_bad_seq_nll"],
-        history["dist2530_sep_corr"],
-        "Validation Dist 25-30 Split NLL Distributions by Epoch (Good vs Bad)",
+    _plot_current_epoch_histogram(
+        axes_hist[2],
+        history["dist2530_good_seq_nll"][-1],
+        history["dist2530_bad_seq_nll"][-1],
+        history["dist2530_sep_corr"][-1],
+        title=f"Validation Dist 25-30 NLL Histogram - Epoch {current_epoch}",
     )
 
-    fig_violin.tight_layout()
-    fig_violin.savefig(violin_path, dpi=140, bbox_inches="tight")
-    plt.close(fig_violin)
+    fig_hist.tight_layout()
+    fig_hist.savefig(violin_path, dpi=140, bbox_inches="tight")
+    plt.close(fig_hist)
