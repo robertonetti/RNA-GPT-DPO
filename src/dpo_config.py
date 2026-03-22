@@ -10,31 +10,31 @@ class Config:
 
     # Data/vocabulary
     max_context: int = 198
-    dn_path: str = "DATA/RF00028_aligned_no_inserts_reweighted_d10.fa"
+    dn_path: str = "data/RF00028_aligned_no_inserts_reweighted_d10.fa"
 
     # Model checkpoint initialization
-    pretrained_ckpt_path: str = "../Transformer_giovanni/checkpoints/RF00028_aligned_GPTTransformer_th10_lr5e-4_batch16_embd64_nhead8_nlayer4_longer_best.pt"
+    pretrained_ckpt_path: str = "checkpoints/checkpoints_giovanni/RF00028_aligned_GPTTransformer_th10_lr5e-4_batch16_embd64_nhead8_nlayer4_longer_best.pt"
 
     # DPO train/val pair datasets
-    train_good_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/DTp_train_split_85_197.fasta"
-    train_bad_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/DTm_train_split_85_197.fasta"
-    train_csv_mapping_path: str = "../Group_I_intron-2/DN&DT/clustering_methods/train_split_85/top20_bin.csv"
+    train_good_fasta_path: str = "data/split_data_197/DTp_train_split_85_197.fasta"
+    train_bad_fasta_path: str = "data/split_data_197/DTm_train_split_85_197.fasta"
+    train_csv_mapping_path: str = "data/clustering_methods/train_split_85/top5_bin.csv"
 
-    val_good_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/DTp_test_split_15_197.fasta"
-    val_bad_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/DTm_test_split_15_197.fasta"
-    val_csv_mapping_path: str = "../Group_I_intron-2/DN&DT/clustering_methods/test_split_15/top20_bin.csv"
+    val_good_fasta_path: str = "data/split_data_197/DTp_test_split_15_197.fasta"
+    val_bad_fasta_path: str = "data/split_data_197/DTm_test_split_15_197.fasta"
+    val_csv_mapping_path: str = "data/clustering_methods/test_split_15/top5_bin.csv"
 
     # Extra datasets used for violin-based separation analysis
-    vae_good_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/vae_split_25_30/DTp_vae_dist_25_30_197.fasta"
-    vae_bad_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/vae_split_25_30/DTm_vae_dist_25_30_197.fasta"
+    vae_good_fasta_path: str = "data/split_data_197/vae_split_25_30/DTp_vae_dist_25_30_197.fasta"
+    vae_bad_fasta_path: str = "data/split_data_197/vae_split_25_30/DTm_vae_dist_25_30_197.fasta"
 
-    dist2530_good_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/DTp_test_split_15_dist_25_30_197.fasta"
-    dist2530_bad_fasta_path: str = "../Group_I_intron-2/DN&DT/split_data_197/DTm_test_split_15_dist_25_30_197.fasta"
+    dist2530_good_fasta_path: str = "data/split_data_197/DTp_test_split_15_dist_25_30_197.fasta"
+    dist2530_bad_fasta_path: str = "data/split_data_197/DTm_test_split_15_dist_25_30_197.fasta"
 
     # Output paths
-    checkpoint_dir: str = "checkpoints_dpo_roberto_epochs"
-    image_dir: str = "images_dpo_roberto_epochs"
-    history_json_path: str = "images_dpo_roberto_epochs/history.json"
+    checkpoint_dir: str = "checkpoints/checkpoints_roberto/"
+    image_dir: str = "images_roberto"
+    history_json_path: str = "images_roberto/history.json"
 
     # Training hyperparameters
     block_size: int = 198
