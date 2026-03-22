@@ -10,6 +10,22 @@ from src.dpo_data import _build_labels_from_inputs
 
 
 def get_logprobs(logits: torch.Tensor, labels: torch.Tensor, pad_token: int) -> torch.Tensor:
+    """Compute per-sequence log-probability from token logits and labels.
+
+    Inputs:
+    - logits: Tensor of shape (B, T, V).
+      B=batch size, T=sequence length, V=vocabulary size.
+    - labels: Target token ids, shape (B, T).
+    - pad_token: Padding token id to ignore.
+
+    Processing:
+    - Applies log_softmax over vocabulary dimension.
+    - Gathers log-probability of each target token.
+    - Masks pad positions and sums over sequence length.
+
+    Output:
+    - Tensor of shape (B,), one summed log-probability per sequence.
+    """
     log_probs = torch.log_softmax(logits, dim=-1)
     per_token_logps = torch.gather(log_probs, dim=2, index=labels.unsqueeze(2)).squeeze(2)
     mask = labels != pad_token
@@ -26,6 +42,26 @@ def compute_dpo_loss_from_tensors(
     pad_token: int,
     beta: float,
 ) -> torch.Tensor:
+    """Compute Direct Preference Optimization loss for one winner/loser batch.
+
+    Inputs:
+    - model: Trainable policy model returning dict with key "logits".
+    - ref_model: Frozen reference model with same output interface.
+    - x_w: Winner inputs, shape (B, T).
+    - y_w: Winner labels, shape (B, T).
+    - x_l: Loser inputs, shape (B, T).
+    - y_l: Loser labels, shape (B, T).
+    - pad_token: Padding token id.
+    - beta: DPO reward scaling.
+
+    Processing:
+    - Computes sequence log-probabilities for winner and loser under policy and reference.
+    - Builds rewards as beta * (policy_logp - reference_logp).
+    - Uses -logsigmoid(reward_w - reward_l), averaged over batch.
+
+    Output:
+    - Scalar tensor: mean DPO loss.
+    """
     logits_w = model(x_w)["logits"]
     logits_l = model(x_l)["logits"]
     logps_w = get_logprobs(logits_w, y_w, pad_token)
@@ -50,6 +86,19 @@ def compute_random_batch_nll(
     n_batches: int,
     batch_size: int,
 ) -> float:
+    """Estimate mean token NLL from random mini-batches sampled with replacement.
+
+    Inputs:
+    - model: Model returning logits of shape (B, T, V).
+    - data_list: List of encoded sequences, each shape (T,).
+    - pad_token: Padding token id.
+    - device: Target device.
+    - n_batches: Number of sampled batches.
+    - batch_size: Number of samples per batch.
+
+    Output:
+    - Python float: aggregated token NLL over sampled batches.
+    """
     total_nll, total_tokens = 0.0, 0
     for _ in range(n_batches):
         idxs = random.choices(range(len(data_list)), k=batch_size)
@@ -74,6 +123,19 @@ def compute_full_dataset_nll(
     device: torch.device,
     batch_size: int,
 ) -> float:
+    """Compute exact mean token NLL over a full dataset.
+
+    Inputs:
+    - model: Model returning logits of shape (B, T, V).
+    - data_list: List of encoded sequences, each shape (T,).
+    - pad_token: Padding token id.
+    - device: Target device.
+    - batch_size: Chunk size for iteration.
+
+    Output:
+    - Python float: exact token NLL for the full dataset.
+    - Returns nan if data_list is empty.
+    """
     total_nll, total_tokens = 0.0, 0
     if len(data_list) == 0:
         return float("nan")
@@ -102,6 +164,19 @@ def compute_full_dataset_dpo_loss_from_loader(
     device: torch.device,
     beta: float,
 ) -> float:
+    """Compute mean DPO loss over all pairs from a DataLoader.
+
+    Inputs:
+    - model: Trainable policy model.
+    - ref_model: Frozen reference model.
+    - loader: Yields tuples (x_w, x_l), each tensor shape (B, T).
+    - pad_token: Padding token id.
+    - device: Target device.
+    - beta: DPO scaling factor.
+
+    Output:
+    - Python float: mean DPO loss over all pairs.
+    """
     total_loss, total_pairs = 0.0, 0
     for x_w, x_l in loader:
         x_w = x_w.to(device)
@@ -136,6 +211,19 @@ def compute_mean_token_likelihood(
     device: torch.device,
     batch_size: int,
 ) -> float:
+    """Compute mean token likelihood by exponentiating mean log-likelihood.
+
+    Inputs:
+    - model: Model returning logits of shape (B, T, V).
+    - data_list: List of encoded sequences, each shape (T,).
+    - pad_token: Padding token id.
+    - device: Target device.
+    - batch_size: Chunk size for iteration.
+
+    Output:
+    - Python float: mean token likelihood.
+    - Returns nan if input list is empty.
+    """
     total_logp, total_tokens = 0.0, 0
     if len(data_list) == 0:
         return float("nan")
@@ -164,6 +252,19 @@ def compute_sequence_nll(
     device: torch.device,
     batch_size: int,
 ) -> torch.Tensor:
+    """Compute one normalized NLL value per sequence.
+
+    Inputs:
+    - model: Model returning logits of shape (B, T, V).
+    - data_list: List of encoded sequences, each shape (T,).
+    - pad_token: Padding token id.
+    - device: Target device.
+    - batch_size: Chunk size for iteration.
+
+    Output:
+    - Tensor of shape (N,), where N=len(data_list).
+    - Returns empty tensor if input list is empty.
+    """
     seq_nlls: List[torch.Tensor] = []
     if len(data_list) == 0:
         return torch.empty(0, dtype=torch.float32)
@@ -193,6 +294,27 @@ def compute_val_separation_correlation(
     device: torch.device,
     batch_size: int,
 ) -> tuple[float, List[float], List[float]]:
+    """Compute Pearson correlation between sequence NLL and binary class labels.
+
+    Inputs:
+    - model: Model used to score sequences.
+    - good_data: List of good encoded sequences, each shape (T,).
+    - bad_data: List of bad encoded sequences, each shape (T,).
+    - pad_token: Padding token id.
+    - device: Target device.
+    - batch_size: Chunk size for scoring.
+
+    Processing:
+    - Computes per-sequence NLL for good and bad groups.
+    - Builds labels: good=0, bad=1.
+    - Computes Pearson r between NLL values and labels.
+
+    Output:
+    - Tuple (pearson_r, good_nll_list, bad_nll_list).
+    - good_nll_list length equals len(good_data).
+    - bad_nll_list length equals len(bad_data).
+    - pearson_r is nan if any group is empty or denominator is zero.
+    """
     good_nll = compute_sequence_nll(model, good_data, pad_token, device, batch_size=batch_size)
     bad_nll = compute_sequence_nll(model, bad_data, pad_token, device, batch_size=batch_size)
 

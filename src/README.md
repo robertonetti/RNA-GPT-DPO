@@ -1,23 +1,23 @@
 # src layout
 
-Questa cartella contiene il codice sorgente modulare del training DPO e i moduli importati.
+This folder contains the modular source code for DPO training and all imported model/utilities modules.
 
-## Struttura
+## Structure
 
-- `DPO_train.py`: orchestratore del training/eval.
-- `dpo_config.py`: configurazione centralizzata (`Config`, `CONFIG`).
-- `dpo_data.py`: lettura FASTA, padding/encoding, dataset e pair dataset.
-- `dpo_metrics.py`: loss DPO e metriche NLL/likelihood/correlazione.
-- `dpo_plotting.py`: generazione dei plot per epoca.
-- `dpo_logging.py`: stampa ordinata dello standard output.
-- `transformer.py`: definizione modello `GPTTransformer`.
-- `Transformer_Reint.py`: utilita' dataset legacy (`load_dataset`, etc.).
+- `dpo_train.py`: training/evaluation orchestrator.
+- `dpo_config.py`: centralized runtime configuration (`Config`, `CONFIG`).
+- `dpo_data.py`: FASTA loading, padding/encoding, dataset and pair dataset utilities.
+- `dpo_metrics.py`: DPO loss and NLL/likelihood/correlation metrics.
+- `dpo_plotting.py`: per-epoch plot generation.
+- `dpo_logging.py`: structured stdout logging helpers.
+- `transformer.py`: `GPTTransformer` model definition.
+- `Transformer_Reint.py`: legacy dataset/training utilities (`load_dataset`, etc.).
 
-## Esecuzione
+## Run
 
-Da `Transformer/` puoi usare uno dei due comandi:
+From project root you can run one of the two commands:
 
-- `python3 DPO_train.py` (launcher compatibile in root)
+- `python3 DPO_train.py` (root-level compatible launcher)
 - `python3 -m src.DPO_train`
 
-Entrambi usano la stessa configurazione in `src/dpo_config.py`.
+Both use the same configuration in `src/dpo_config.py`.

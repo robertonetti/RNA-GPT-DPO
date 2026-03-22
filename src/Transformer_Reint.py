@@ -8,6 +8,14 @@ from typing import Callable, Dict, List, Tuple
 
 class Head(nn.Module):
     def __init__(self, n_embd: int, head_size: int, block_size: int, dropout: float):
+        """Initialize one causal self-attention head.
+
+        Inputs:
+        - n_embd: Model width ``C``.
+        - head_size: Per-head channel size ``D``.
+        - block_size: Maximum sequence length for causal mask.
+        - dropout: Dropout probability on attention weights.
+        """
         super().__init__()
         self.key = nn.Linear(n_embd, head_size, bias=False)
         self.query = nn.Linear(n_embd, head_size, bias=False)
@@ -16,12 +24,26 @@ class Head(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, key_padding_mask: torch.Tensor = None) -> torch.Tensor:
+        """Compute single-head causal attention output.
+
+        Inputs:
+        - x: Token tensor ``(B, T, C)``.
+        - key_padding_mask: Optional boolean mask ``(B, T)`` where True means valid token.
+
+        Output:
+        - Tensor ``(B, T, D)`` for one attention head.
+        """
+        # B=batch, T=time, C=channels.
         B, T, C = x.shape
+        # Project inputs to key/query spaces.
         k = self.key(x)
         q = self.query(x)
+        # Scaled dot-product attention scores.
         wei = q @ k.transpose(-2, -1) * (C ** -0.5)
+        # Causal mask prevents attending to future positions.
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         if key_padding_mask is not None:
+            # Also mask padded positions if provided.
             mask = ~key_padding_mask.unsqueeze(1)
             wei = wei.masked_fill(mask, float('-inf'))
         wei = F.softmax(wei, dim=-1)
@@ -31,6 +53,14 @@ class Head(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, n_embd: int, n_head: int, block_size: int, dropout: float):
+        """Create a multi-head causal attention module.
+
+        Inputs:
+        - n_embd: Model width ``C``.
+        - n_head: Number of heads ``H``.
+        - block_size: Maximum sequence length.
+        - dropout: Dropout probability.
+        """
         super().__init__()
         head_size = n_embd // n_head
         self.heads = nn.ModuleList([
@@ -41,11 +71,25 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, key_padding_mask: torch.Tensor = None) -> torch.Tensor:
+        """Apply all heads and project concatenated output.
+
+        Input:
+        - x: Tensor ``(B, T, C)``.
+
+        Output:
+        - Tensor ``(B, T, C)``.
+        """
         out = torch.cat([h(x, key_padding_mask) for h in self.heads], dim=-1)
         return self.dropout(self.proj(out))
 
 class FeedForward(nn.Module):
     def __init__(self, n_embd: int, dropout: float):
+        """Build transformer MLP sublayer.
+
+        Inputs:
+        - n_embd: Model width ``C``.
+        - dropout: Dropout probability.
+        """
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(n_embd, 4 * n_embd),
@@ -55,10 +99,16 @@ class FeedForward(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply feed-forward transform token-wise.
+
+        Input/Output:
+        - ``x`` shape ``(B, T, C)`` -> output shape ``(B, T, C)``.
+        """
         return self.net(x)
 
 class Block(nn.Module):
     def __init__(self, n_embd: int, n_head: int, block_size: int, dropout: float):
+        """Initialize one transformer residual block (attention + MLP)."""
         super().__init__()
         self.sa = MultiHeadAttention(n_embd, n_head, block_size, dropout)
         self.ffwd = FeedForward(n_embd, dropout)
@@ -66,6 +116,15 @@ class Block(nn.Module):
         self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x: torch.Tensor, key_padding_mask: torch.Tensor = None) -> torch.Tensor:
+        """Apply block forward pass with residual connections.
+
+        Inputs:
+        - x: Tensor ``(B, T, C)``.
+        - key_padding_mask: Optional mask ``(B, T)``.
+
+        Output:
+        - Tensor ``(B, T, C)``.
+        """
         x_ln1 = self.ln1(x)
         if key_padding_mask is not None:
             x_ln1 = x_ln1 * key_padding_mask.unsqueeze(-1)
@@ -89,6 +148,17 @@ class GPTmodel(nn.Module):
         dropout: float,
         pad_token: int
     ):
+        """Construct a GPT-style decoder model.
+
+        Inputs:
+        - vocab_size: Vocabulary size ``V``.
+        - n_embd: Model width ``C``.
+        - n_layer: Number of transformer blocks.
+        - n_head: Number of attention heads.
+        - block_size: Maximum context length ``Tmax``.
+        - dropout: Dropout probability.
+        - pad_token: PAD id used in loss masking.
+        """
         super().__init__()
         self.pad_token = pad_token
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd, padding_idx=pad_token)
@@ -106,7 +176,19 @@ class GPTmodel(nn.Module):
         key_padding_mask: torch.Tensor = None,
         targets: torch.Tensor = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Run model forward pass.
+
+        Inputs:
+        - idx: Token tensor ``(B, T)``.
+        - key_padding_mask: Optional validity mask ``(B, T)``.
+        - targets: Optional labels ``(B, T)``.
+
+        Output:
+        - logits: Tensor ``(B, T, V)``.
+        - loss: Scalar CE tensor or ``None`` if ``targets`` is not provided.
+        """
         B, T = idx.shape
+        # Token and position embeddings are summed before Transformer blocks.
         tok_emb = self.token_embedding_table(idx)
         pos_ids = torch.arange(T, device=idx.device)
         pos_emb = self.position_embedding_table(pos_ids)
@@ -117,6 +199,7 @@ class GPTmodel(nn.Module):
             x = block(x, key_padding_mask)
         x = self.ln_f(x)
         logits = self.lm_head(x)
+        # Never predict PAD as next token during generation/training.
         logits[..., self.pad_token] = -1e9
         loss = None
         if targets is not None:
@@ -125,6 +208,16 @@ class GPTmodel(nn.Module):
         return logits, loss
     
     def generate(self, idx, max_new_tokens, block_size) :
+        """Autoregressively sample tokens from the model.
+
+        Inputs:
+        - idx: Prompt tensor ``(B, T0)``.
+        - max_new_tokens: Max number of generated tokens.
+        - block_size: Context window length used for conditioning.
+
+        Output:
+        - Tensor ``(B, T0 + K)`` with ``1 <= K <= max_new_tokens`` depending on stop condition.
+        """
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
             # crop idx to the last block_size tokens
@@ -147,8 +240,21 @@ class GPTmodel(nn.Module):
     
 
     def generate_prob(self, idx, max_new_tokens, block_size, decode_fn, fasta_path="output.fasta"):
+        """Generate sequences and store per-sequence sampling log-probabilities.
+
+        Inputs:
+        - idx: Prompt tensor ``(B, T0)``.
+        - max_new_tokens: Generation limit.
+        - block_size: Context window.
+        - decode_fn: Callable mapping token ids to sequence string.
+        - fasta_path: Output FASTA path where generated records are appended.
+
+        Output:
+        - Tensor containing generated token ids, shape ``(B, T0 + K)``.
+        """
         # helper to save sequences + log-probs to FASTA and return
         def _save_and_return(sequences, all_log_probs):
+            """Write generated sequences with total/mean log-probability metadata to FASTA."""
             seqs = sequences.cpu().tolist()
             with open(fasta_path, "a") as f:
                 for i, (seq, logs) in enumerate(zip(seqs, all_log_probs)):
@@ -193,6 +299,15 @@ class GPTmodel(nn.Module):
 
 
 def set_dropout(model, new_p):
+    """Set a new dropout probability for all ``nn.Dropout`` modules in ``model``.
+
+    Inputs:
+    - model: PyTorch module tree.
+    - new_p: New dropout probability in ``[0, 1]``.
+
+    Output:
+    - None (in-place modification).
+    """
     for module in model.modules():
         if isinstance(module, nn.Dropout):
             module.p = new_p
@@ -206,7 +321,19 @@ def reint_loss(
     Rb: torch.Tensor,
     pad_token: int
 ) -> torch.Tensor:
+    """Compute reward-weighted token cross-entropy.
+
+    Inputs:
+    - logits: Tensor ``(B, T, V)``.
+    - targets: Target ids ``(B, T)``.
+    - Rb: Reward weights per sequence ``(B,)``.
+    - pad_token: Token id ignored in loss.
+
+    Output:
+    - Scalar tensor: mean weighted token loss over non-pad positions.
+    """
     B, T, V = logits.size()
+    # Compute token-level CE and keep per-token values.
     loss_flat = F.cross_entropy(
         logits.view(-1, V),
         targets.view(-1),
@@ -214,6 +341,7 @@ def reint_loss(
         reduction='none'
     )
     loss = loss_flat.view(B, T) * Rb.unsqueeze(-1)
+    # Remove PAD tokens from the final average.
     mask = targets != pad_token
     return loss[mask].mean()
 
@@ -226,6 +354,20 @@ def reint_ppo_loss(logits,
                    batch_size,
                    pad_token,
                    clip_eps: float = 0.2):
+    """Compute PPO clipped objective from current and legacy token distributions.
+
+    Inputs:
+    - logits: Current policy logits shaped as ``(B*T, V)``.
+    - legacy_logits: Reference policy logits shaped as ``(B*T, V)``.
+    - targets: Token ids ``(B, T)``.
+    - Rb: Per-sequence rewards ``(B,)``.
+    - batch_size: ``B``.
+    - pad_token: Padding token id ignored in final mean.
+    - clip_eps: PPO clipping factor.
+
+    Output:
+    - Scalar tensor: PPO loss.
+    """
     
 
     # logits:          [B * T, C] current policy logits
@@ -262,17 +404,16 @@ def reint_ppo_loss(logits,
 
 def dkl_between_logits(logits, legacy_logits):
     """
-    Compute average KL divergence D_KL(P || Q) over (Batch, Tokens),
-    where P = softmax(logits), Q = softmax(legacy_logits).
-    
-    Args:
-        logits: Tensor of shape (B, T, C)
-        legacy_logits: Tensor of shape (B, T, C)
+    Compute mean KL divergence ``D_KL(P || Q)`` between token distributions.
 
-    Returns:
-        Scalar tensor: mean KL divergence over batch and time.
+    Inputs:
+    - logits: Current policy logits with shape ``(B, T, V)``.
+    - legacy_logits: Reference logits with shape ``(B, T, V)``.
+
+    Output:
+    - Scalar tensor: mean KL over batch and time.
     """
-    # Ensure float type
+    # Ensure float type for numerically stable KL computation.
     logits = logits.float()
     legacy_logits = legacy_logits.float()
 
@@ -286,7 +427,7 @@ def dkl_between_logits(logits, legacy_logits):
     # Compute D_KL(P || Q) per token: sum_c P * (logP - logQ)
     dkl = (p * (log_p - log_q)).sum(dim=-1)  # shape: (B, T)
 
-    # Average over batch and time
+    # Average over batch and time.
     return dkl.mean()
 
 
@@ -303,11 +444,21 @@ def load_dataset(
     encode_fn: Callable[[str], List[int]],
 ) -> Dict[str, Dict[str, List[torch.Tensor]]]:
     """
-    Loads sequences and labels, encodes/pads to block_size, shuffles,
-    and splits into train/validation with separate good/bad for val.
-    Returns dict with keys:
-      'train', 'train_good', 'train_bad', 'val', 'val_good', 'val_bad'
-    Each value is a dict with 'data' and 'labels'.
+        Load, encode, and split sequence dataset into train/validation partitions.
+
+        Inputs:
+        - seq_path: FASTA-like sequence file path.
+        - label_path: Label file path or "." to assign label 1 to all samples.
+        - block_size: Encoded fixed sequence length ``T``.
+        - train_size: Number of first samples used for training split.
+        - pad_token: Padding token id.
+        - encode_fn: String-to-token-id callable.
+
+        Output:
+        - Dictionary with keys:
+            ``train``, ``train_good``, ``train_bad``, ``val``, ``val_good``, ``val_bad``.
+        - Each split dictionary includes:
+            ``data`` (list of tensors shape ``(T,)``) and ``labels`` (list of ints).
     """
     # Read sequences
     with open(seq_path, 'r', encoding='utf-8') as f:
@@ -323,6 +474,7 @@ def load_dataset(
 
     # Encode & pad helper
     def pad_encode(seq: str) -> torch.Tensor:
+        """Encode one sequence and return a fixed-length tensor ``(T,)``."""
         txt = f"\n{seq}\n"
         ids = encode_fn(txt)
         if len(ids) < block_size:
@@ -353,6 +505,7 @@ def load_dataset(
 
     # Helper to split good/bad
     def split_by_label(data_list, label_list):
+        """Split list-based data into ``good`` (label=1) and ``bad`` (label!=1) groups."""
         good = [(d, l) for d, l in zip(data_list, label_list) if l == 1]
         bad  = [(d, l) for d, l in zip(data_list, label_list) if l != 1]
         return {
@@ -384,8 +537,21 @@ def get_batch(
     device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Builds a batch for the given split key.
-    Returns x, y, pad_mask, R (labels, negatives downweighted).
+    Build a random training/evaluation batch from a named split.
+
+    Inputs:
+    - split: Dataset key (for example ``train_good`` or ``val_bad``).
+    - datasets: Output dictionary from ``load_dataset``.
+    - batch_size: Number of sampled sequences ``B``.
+    - block_size: Context length ``T``.
+    - pad_token: Padding token id.
+    - device: Target device.
+
+    Output:
+    - ``x``: Input ids ``(B, T)``.
+    - ``y``: Shifted labels ``(B, T+1)`` in current implementation.
+    - ``pad_mask``: Valid-token mask ``(B, T)``.
+    - ``R``: Reward/label vector ``(B,)``.
     """
     data_list = datasets[split]['data']
     labels = datasets[split]['labels']
@@ -417,11 +583,20 @@ def estimate_evaluation_losses(
     mode = "legacy"
 ) -> Dict[str, float]:
     """
-    Computes average probabilities (losses with R=1) for:
-      - 'train_good'
-      - 'train_bad'
-      - 'val_good'
-      - 'val_bad'
+        Estimate average token losses on selected dataset splits.
+
+        Inputs:
+        - model: Sequence model returning ``(logits, loss)``.
+        - datasets: Dataset dictionary from ``load_dataset``.
+        - eval_iters: Number of random batches per split.
+        - batch_size: Batch size ``B``.
+        - block_size: Context length.
+        - pad_token: Padding id.
+        - device: Compute device.
+        - mode: ``legacy`` evaluates only good splits; otherwise evaluates good+bad.
+
+        Output:
+        - Dict mapping split name -> mean loss (float).
     """
     if mode == "legacy":
          keys = ['train_good', 'val_good']

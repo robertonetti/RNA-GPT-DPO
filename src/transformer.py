@@ -17,18 +17,45 @@ import torch.nn.functional as F
 
 
 def rotate_half(x):
+    """Rotate paired feature channels used by RoPE.
+
+    Input:
+    - x: Tensor with last dimension ``D`` (typically even).
+
+    Output:
+    - Tensor with same shape as ``x`` where each ``(x1, x2)`` channel pair is
+        transformed into ``(-x2, x1)``.
+    """
+    # Split last dimension into two halves and apply quarter-turn rotation.
     x1, x2 = x.chunk(2, dim=-1)
     return torch.cat((-x2, x1), dim=-1)
 
 
 def apply_rotary_pos_emb(x, cos, sin):
+    """Apply rotary positional transform to attention tensors.
+
+    Inputs:
+    - x: Query/key tensor of shape ``(B, H, T, D)``.
+    - cos: Cached cosine table broadcastable to ``x``.
+    - sin: Cached sine table broadcastable to ``x``.
+
+    Output:
+    - Tensor of shape ``(B, H, T, D)`` with RoPE applied.
+    """
+    # Slice cached cos/sin tables to current sequence length.
     cos = cos[:, :, : x.shape[-2], :]
     sin = sin[:, :, : x.shape[-2], :]
+    # Standard RoPE application.
     return (x * cos) + (rotate_half(x) * sin)
 
 
 class RotaryEmbedding(torch.nn.Module):
     def __init__(self, dim: int):
+        """Initialize inverse frequencies and caches for rotary embeddings.
+
+        Input:
+        - dim: Per-head embedding dimension ``D``.
+        """
         super().__init__()
         # Generate and save the inverse frequency buffer (non trainable)
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2, dtype=torch.int64).float() / dim))
@@ -40,6 +67,15 @@ class RotaryEmbedding(torch.nn.Module):
         self._sin_cached = None
 
     def _update_cos_sin_tables(self, x: torch.Tensor, seq_dimension: int = -2):
+        """Return cosine/sine tables for current sequence shape and device.
+
+        Inputs:
+        - x: Reference tensor used to infer sequence length/device.
+        - seq_dimension: Index of sequence axis in ``x``.
+
+        Output:
+        - Tuple ``(cos, sin)`` with shape ``(1, 1, T, D)``.
+        """
         seq_len = x.shape[seq_dimension]
 
         # Reset the tables if the sequence length has changed,
@@ -50,6 +86,7 @@ class RotaryEmbedding(torch.nn.Module):
             or self._cos_cached.device != x.device
             or (self.training and self._cos_cached.is_inference())
         ):
+            # Recompute tables only when cache is stale.
             self._seq_len_cached = seq_len
             t = torch.arange(x.shape[seq_dimension], device=x.device).type_as(self.inv_freq)
             freqs = torch.outer(t, self.inv_freq)
@@ -61,6 +98,15 @@ class RotaryEmbedding(torch.nn.Module):
         return self._cos_cached, self._sin_cached
 
     def forward(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Apply RoPE to query and key tensors.
+
+        Inputs:
+        - q: Query tensor ``(B, H, Tq, D)``.
+        - k: Key tensor ``(B, H, Tk, D)``.
+
+        Output:
+        - Tuple ``(q_rot, k_rot)`` with same shapes as inputs.
+        """
         self._cos_cached, self._sin_cached = self._update_cos_sin_tables(k, seq_dimension=-2)
         return (
             apply_rotary_pos_emb(q, self._cos_cached, self._sin_cached),
@@ -70,6 +116,14 @@ class RotaryEmbedding(torch.nn.Module):
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, n_embd: int, n_head: int, dropout_p: float = 0.1, is_causal: bool = True):
+        """Initialize multi-head attention module.
+
+        Inputs:
+        - n_embd: Model embedding size ``C``.
+        - n_head: Number of attention heads ``H``.
+        - dropout_p: Attention dropout probability.
+        - is_causal: Whether to enforce causal masking.
+        """
         super().__init__()
         assert n_embd % n_head == 0, "n_embd must be divisible by n_head"
         self.n_head = n_head
@@ -90,6 +144,19 @@ class MultiHeadAttention(nn.Module):
         past_kv: tuple[torch.Tensor, torch.Tensor] | None = None,
         use_cache: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None]:
+        """Compute attention output.
+
+        Inputs:
+        - x: Query source tensor ``(B, T, C)``.
+        - kv: Optional key/value source tensor ``(B, S, C)``; if ``None``, self-attention is used.
+        - mask: Optional attention mask.
+        - past_kv: Optional cached keys/values (not supported in this implementation).
+        - use_cache: If ``True``, returns current ``(k, v)`` pair.
+
+        Output:
+        - ``output``: Tensor ``(B, T, C)``.
+        - ``new_kv``: ``None`` or tuple of tensors with shape ``(B, H, S, D)``.
+        """
         if past_kv is not None or use_cache is True:
             raise NotImplementedError("KV caching is not implemented")
         
@@ -135,6 +202,13 @@ class MultiHeadAttention(nn.Module):
 
 class MLP(nn.Module):
     def __init__(self, embed_dim: int, dropout_p: float = 0.1, mlp_ratio: int = 4):
+        """Initialize feed-forward network used in transformer layers.
+
+        Inputs:
+        - embed_dim: Model width ``C``.
+        - dropout_p: Dropout probability.
+        - mlp_ratio: Expansion factor for hidden width (hidden = ``mlp_ratio * C``).
+        """
         super().__init__()
         upscale_dim = embed_dim * mlp_ratio
         self.up_proj = nn.Linear(embed_dim, upscale_dim)
@@ -143,6 +217,14 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(dropout_p)
 
     def forward(self, x: torch.Tensor):
+        """Apply MLP transform token-wise.
+
+        Input:
+        - x: Tensor ``(B, T, C)``.
+
+        Output:
+        - Tensor ``(B, T, C)``.
+        """
         x = self.dropout(self.act(self.up_proj(x)))
         x = self.down_proj(x)
         return x
@@ -150,6 +232,15 @@ class MLP(nn.Module):
 
 class TransformerLayer(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout_p, mlp_ratio, is_causal=True):
+        """Create one pre-norm transformer block.
+
+        Inputs:
+        - embed_dim: Model width ``C``.
+        - num_heads: Attention head count ``H``.
+        - dropout_p: Dropout probability.
+        - mlp_ratio: Hidden expansion in MLP.
+        - is_causal: Use causal attention if ``True``.
+        """
         super().__init__()
         self.ln1 = nn.LayerNorm(embed_dim)
         self.attn = MultiHeadAttention(embed_dim, num_heads, dropout_p, is_causal)
@@ -164,6 +255,15 @@ class TransformerLayer(nn.Module):
         past_kv: tuple[torch.Tensor, torch.Tensor] | None = None,
         use_cache: bool = False,
     ):
+        """Apply attention + MLP residual updates.
+
+        Input:
+        - x: Tensor ``(B, T, C)``.
+
+        Output:
+        - Updated tensor ``(B, T, C)``.
+        - Optional key/value cache tuple.
+        """
         x_att, new_kv = self.attn(
             self.ln1(x), kv=kv, mask=mask, past_kv=past_kv, use_cache=use_cache
         )
@@ -174,6 +274,17 @@ class TransformerLayer(nn.Module):
 
 class GPTTransformer(nn.Module):
     def __init__(self, vocab_size, embed_dim, num_heads, num_layers, dropout_p, mlp_ratio, pad_id):
+        """Build a decoder-only GPT-style transformer.
+
+        Inputs:
+        - vocab_size: Vocabulary size ``V``.
+        - embed_dim: Model width ``C``.
+        - num_heads: Attention heads ``H``.
+        - num_layers: Number of transformer blocks.
+        - dropout_p: Dropout probability.
+        - mlp_ratio: MLP expansion ratio.
+        - pad_id: Padding token id used for loss masking.
+        """
         super().__init__()
         self.vocab_size = vocab_size
         self.embed_dim = embed_dim
@@ -198,8 +309,22 @@ class GPTTransformer(nn.Module):
         past_kv: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         use_cache: bool = False,
     ) -> dict[str, Any]:
+        """Run model forward pass and optional language-model loss.
+
+        Inputs:
+        - input_ids: Token tensor ``(B, T)``.
+        - targets: Optional label tensor ``(B, T)``.
+        - past_kv: Optional list of per-layer caches.
+        - use_cache: If ``True``, returns per-layer key/value tensors.
+
+        Output dictionary:
+        - ``logits``: Tensor ``(B, T, V)``.
+        - ``loss``: Scalar tensor or ``None``.
+        - ``past_kv``: ``None`` or list with ``num_layers`` cache tuples.
+        """
         
         if past_kv is None:
+            # Create a per-layer placeholder cache list.
             past_kv = [None] * self.num_layers
 
         # Embed
@@ -238,8 +363,18 @@ class GPTTransformer(nn.Module):
         generator: torch.Generator | None = None,
     ) -> torch.LongTensor:
         """
-        Generate new tokens autoregressively.
-        If eos_id is provided, stops generation for sequences that produce EOS.
+        Autoregressively sample new tokens from the model distribution.
+
+        Inputs:
+        - x: Prompt tensor of shape ``(B, T0)``.
+        - max_new_tokens: Maximum number of sampled tokens to append.
+        - eos_id: Optional stop token id.
+        - temperature: Logit temperature scaling.
+        - top_k: Optional top-k sampling cutoff.
+        - generator: Optional torch RNG generator.
+
+        Output:
+        - Tensor of shape ``(B, T0 + K)`` where ``0 <= K <= max_new_tokens``.
         """
         B = x.shape[0]
 

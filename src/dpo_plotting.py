@@ -13,6 +13,19 @@ def _plot_current_epoch_histogram(
     pearson_value: float,
     title: str,
 ) -> None:
+    """Draw overlaid good/bad sequence-NLL histograms for one split.
+
+    Inputs:
+    - ax: Matplotlib axis where the histogram is drawn.
+    - good_distribution: List of ``N_good`` per-sequence NLL values.
+    - bad_distribution: List of ``N_bad`` per-sequence NLL values.
+    - pearson_value: Scalar Pearson correlation for annotation.
+    - title: Plot title.
+
+    Output:
+    - None. The function mutates ``ax`` in-place.
+    """
+    # Track whether each class has at least one point to draw.
     has_good = len(good_distribution) > 0
     has_bad = len(bad_distribution) > 0
 
@@ -39,6 +52,7 @@ def _plot_current_epoch_histogram(
         )
 
     if has_good or has_bad:
+        # NaN-safe formatting of Pearson annotation.
         if pearson_value == pearson_value:
             pearson_text = f"Pearson = {pearson_value:.3f}"
         else:
@@ -75,8 +89,21 @@ def _plot_current_epoch_histogram(
 
 
 def save_epoch_figures(history: Dict[str, List[Any]], main_path: Path, violin_path: Path) -> None:
+    """Generate and save the two standard training figures for the current history.
+
+    Inputs:
+    - history: Metric dictionary with per-epoch lists.
+        Key size convention: each scalar list has length ``E`` (number of stored epochs).
+    - main_path: Output file path for multi-panel epoch curves.
+    - violin_path: Output file path for current-epoch histogram panels.
+
+    Output:
+    - None. Writes PNG files to disk.
+    """
+    # X-axis values shared by all time-series panels.
     epochs = history["epoch"]
 
+    # Figure 1: training curves across epochs.
     fig_main, axes_main = plt.subplots(1, 3, figsize=(24, 6))
 
     ax_nll = axes_main[0]
@@ -139,9 +166,11 @@ def save_epoch_figures(history: Dict[str, List[Any]], main_path: Path, violin_pa
     ax_dpo.legend()
 
     fig_main.tight_layout()
+    # Persist chart and free figure memory immediately.
     fig_main.savefig(main_path, dpi=140, bbox_inches="tight")
     plt.close(fig_main)
 
+    # Figure 2: per-sequence NLL distributions for the latest epoch only.
     current_epoch = epochs[-1]
 
     fig_hist, axes_hist = plt.subplots(1, 3, figsize=(24, 6))

@@ -8,14 +8,31 @@ from src.dpo_config import Config
 
 
 def _fmt_float(value: float, digits: int = 4) -> str:
-    """Format floats consistently in logs, handling NaN values."""
+    """Format a float for logs with NaN-safe behavior.
+
+    Inputs:
+    - value: Numeric value to print.
+    - digits: Number of decimal digits for finite values.
+
+    Output:
+    - String representation of value (or "nan" for NaN).
+    """
+    # NaN is the only float for which (x == x) is False.
     if value == value:
         return f"{value:.{digits}f}"
     return "nan"
 
 
 def _print_section(title: str) -> None:
-    """Print a visually clear section header for terminal logs."""
+    """Print a visual section separator and title.
+
+    Input:
+    - title: Section name displayed between separator lines.
+
+    Output:
+    - None (console side effect only).
+    """
+    # Build a fixed-width separator line for readability.
     bar = "=" * 96
     print(f"\n{bar}")
     print(title)
@@ -39,7 +56,20 @@ def print_run_configuration(
     val_bad_fasta_path: Path,
     val_csv_mapping_path: Path,
 ) -> None:
-    """Print the run setup in a stable, readable order before training."""
+    """Print a structured summary of training configuration and dataset sizes.
+
+    Inputs:
+    - cfg: Runtime config dataclass.
+    - device: Active compute device.
+    - train_pair_count, val_pair_count: Number of preference pairs.
+    - vae_good_count, vae_bad_count: VAE evaluation split sizes.
+    - dist2530_good_count, dist2530_bad_count: Dist25-30 split sizes.
+    - dn_eval_count: Number of DN sequences used for likelihood monitoring.
+    - *_path arguments: Resolved filesystem paths for train/validation sources.
+
+    Output:
+    - None (console side effect only).
+    """
     _print_section("RUN CONFIGURATION")
     print("Model:")
     print(f"  Device                          : {device}")
@@ -94,7 +124,21 @@ def print_eval_summary(
     nll_val_good_full: float,
     nll_val_bad_full: float,
 ) -> None:
-    """Print one compact but explicit metrics report (baseline or epoch)."""
+    """Print one metrics report block for baseline or epoch evaluation.
+
+    Inputs:
+    - title: Section title (for example BASELINE EVALUATION).
+    - epoch_label: Human-readable epoch label.
+    - dpo_*: DPO losses (batch/full train/full validation).
+    - nll_*: Random-batch and optional full-split NLL metrics.
+    - mean_like_model/ref: DN mean token likelihood values.
+    - compute_val_separation_metric: Toggle for separation output.
+    - val_sep_corr, vae_sep_corr, dist2530_sep_corr: Correlation scores.
+    - compute_full_nll_metrics: Toggle for full-split NLL output.
+
+    Output:
+    - None (console side effect only).
+    """
     _print_section(title)
     print(f"{epoch_label}")
     print("\nDPO losses:")

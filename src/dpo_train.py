@@ -48,11 +48,30 @@ from src.dpo_logging import print_run_configuration, print_eval_summary
 # Main training
 # ============================
 def main(cfg: Config) -> None:
+    """Run the complete epoch-based DPO pipeline.
+
+    Input:
+    - cfg: ``Config`` dataclass with paths, model hyperparameters, and metric switches.
+
+    Main stages:
+    - Build vocabulary and tokenizer from DN data.
+    - Load pretrained model and create frozen reference copy.
+    - Build preference datasets and dataloaders.
+    - Evaluate baseline metrics (epoch 0).
+    - Train for ``cfg.num_epochs`` and evaluate after each epoch.
+    - Save checkpoints, plots, metric history JSON, and resolved config JSON.
+
+    Output:
+    - None (side effects only: files on disk + console logs).
+    """
+    # Project root is used to resolve all relative paths from config.
     project_dir = Path(__file__).resolve().parent.parent
 
+    # Seed Python and PyTorch RNGs for reproducible runs.
     random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
 
+    # Prefer CUDA, then Apple MPS, otherwise CPU fallback.
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -62,20 +81,25 @@ def main(cfg: Config) -> None:
     )
 
     if torch.cuda.is_available():
+        # Enable TensorFloat32 acceleration on supported GPUs.
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
     if cfg.suppress_dynamo_errors:
+        # Avoid hard failures when torch.compile graph capture hits edge cases.
         torch._dynamo.config.suppress_errors = True
 
+    # Resolve dataset/checkpoint paths against project root.
     dn_path = resolve_path(project_dir, cfg.dn_path)
     ckpt_path_gpt = resolve_path(project_dir, cfg.pretrained_ckpt_path)
 
+    # Build tokenizer alphabet directly from DN file symbols.
     with dn_path.open("r", encoding="utf-8") as f:
         temp = f.read().splitlines()[1::2]
         temp = "\n".join(temp)
 
     chars = sorted(list(set(temp)))
+    # Reserve one explicit padding symbol.
     pad_symbol = "?"
     chars = chars + [pad_symbol]
     stoi = {ch: i for i, ch in enumerate(chars)}
@@ -84,13 +108,22 @@ def main(cfg: Config) -> None:
     vocab_size = len(stoi)
 
     def encode(s: str) -> List[int]:
+        """Encode a string into token ids using the run-local ``stoi`` mapping.
+
+        Input:
+        - s: Raw text sequence.
+
+        Output:
+        - List of length ``len(s)`` with integer token ids.
+        """
+        # Character-level encoding used by all data loaders.
         return [stoi[c] for c in s]
 
     dn_dataset = load_dataset(
         seq_path=str(dn_path),
         label_path=".",
         block_size=cfg.max_context,
-        train_size=2000,
+        train_size=2000, # dataset is 817 sequences, so train_size=2000 means we use the whole dataset for training
         encode_fn=encode,
         pad_token=pad_token,
     )
@@ -107,16 +140,20 @@ def main(cfg: Config) -> None:
     legacy_model.load_state_dict(torch.load(ckpt_path_gpt, map_location="cpu"))
     legacy_model = legacy_model.to(device)
 
+    # Fine-tuned model starts from pretrained GPT checkpoint.
     model = legacy_model
 
     if cfg.layers_to_freeze > 0:
         print(f"Freezing embeddings and first {cfg.layers_to_freeze} blocks...")
+        # Freeze token embedding table first.
         for p in model.token_emb.parameters():
             p.requires_grad = False
+        # Freeze first N transformer blocks.
         for block in model.layers[: cfg.layers_to_freeze]:
             for p in block.parameters():
                 p.requires_grad = False
 
+    # Reference model is a frozen copy used in DPO comparisons.
     ref_model = copy.deepcopy(model).to(device)
     ref_model.eval()
 
@@ -129,6 +166,7 @@ def main(cfg: Config) -> None:
             print(f"torch.compile failed, falling back to eager mode: {e}")
 
     optimizer = torch.optim.AdamW(
+        # Exclude frozen parameters from optimizer state.
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=cfg.learning_rate,
     )
@@ -138,6 +176,7 @@ def main(cfg: Config) -> None:
         gamma=cfg.scheduler_gamma,
     )
 
+    # Load DPO datasets and create DataLoaders for train/val pairs and extra eval sets.
     train_good_fasta_path = resolve_path(project_dir, cfg.train_good_fasta_path)
     train_bad_fasta_path = resolve_path(project_dir, cfg.train_bad_fasta_path)
     train_csv_mapping_path = resolve_path(project_dir, cfg.train_csv_mapping_path)
@@ -156,10 +195,12 @@ def main(cfg: Config) -> None:
     image_dir = resolve_path(project_dir, cfg.image_dir)
     history_json_path = resolve_path(project_dir, cfg.history_json_path)
 
+    # Ensure output directories always exist before writing files.
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     image_dir.mkdir(parents=True, exist_ok=True)
     history_json_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Load datasets 
     dpo_dataset = load_dpo_dataset(
         good_fasta_path=train_good_fasta_path,
         bad_fasta_path=train_bad_fasta_path,
@@ -169,7 +210,7 @@ def main(cfg: Config) -> None:
         encode_fn=encode,
     )
 
-    val_dpo_dataset = load_dpo_dataset(
+    val_dpo_dataset = load_dpo_dataset( 
         good_fasta_path=val_good_fasta_path,
         bad_fasta_path=val_bad_fasta_path,
         csv_path=val_csv_mapping_path,
@@ -178,27 +219,32 @@ def main(cfg: Config) -> None:
         encode_fn=encode,
     )
 
-    vae_good_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(vae_good_fasta_path)]
-    vae_bad_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(vae_bad_fasta_path)]
+    vae_good_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(vae_good_fasta_path)] # shape (N_vae_good, block_size)
+    vae_bad_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(vae_bad_fasta_path)] # shape (N_vae_bad, block_size)
 
     dist2530_good_data = [
         pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(dist2530_good_fasta_path)
-    ]
+    ] # shape (N_dist2530_good, block_size)
     dist2530_bad_data = [
         pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(dist2530_bad_fasta_path)
-    ]
+    ] # shape (N_dist2530_bad, block_size)
 
-    train_pair_dataset = PreferencePairDataset(dpo_dataset)
-    val_pair_dataset = PreferencePairDataset(val_dpo_dataset)
+    # Create DataLoaders for training/validation pairs and extra eval sets.
+    train_pair_dataset = PreferencePairDataset(dpo_dataset) # shape (N_train_pairs, 2) where each item is (good_idx, bad_idx)
+    val_pair_dataset = PreferencePairDataset(val_dpo_dataset) # shape (N_val_pairs, 2) where each item is (good_idx, bad_idx)
 
-    train_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=False)
-    train_eval_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
-    val_loader = DataLoader(val_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
+    # Train loader is shuffled; eval loaders are deterministic.
+    train_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=False) # shape (N_train_pairs // batch_size, batch_size, 2)
+    train_eval_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False) # shape (N_train_pairs // batch_size, batch_size, 2)
+    val_loader = DataLoader(val_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False) # shape (N_val_pairs // batch_size, batch_size, 2)
 
+    # 
     dn_full_data = dn_dataset["val"]["data"]
     if cfg.dn_likelihood_mode == "full":
+        # Evaluate likelihood on all DN validation sequences.
         dn_eval_data = dn_full_data
     elif cfg.dn_likelihood_mode == "fixed_subsample":
+        # Evaluate on a fixed random subset for cheaper/stable tracking.
         k = min(cfg.dn_fixed_subsample_size, len(dn_full_data))
         rng = random.Random(cfg.dn_fixed_subsample_seed)
         dn_eval_indices = rng.sample(range(len(dn_full_data)), k)
@@ -206,6 +252,7 @@ def main(cfg: Config) -> None:
     else:
         raise ValueError("dn_likelihood_mode must be either 'full' or 'fixed_subsample'.")
 
+    # Print run configuration summary before starting training.
     print_run_configuration(
         cfg=cfg,
         device=device,
@@ -224,7 +271,9 @@ def main(cfg: Config) -> None:
         val_csv_mapping_path=val_csv_mapping_path,
     )
 
+    # Initialize history dictionary to store metrics across epochs for plotting and JSON export.
     history: Dict[str, List[Any]] = {
+        # Store one value per epoch for each metric key.
         "epoch": [],
         "dpo_train_batch_epoch": [],
         "dpo_train_full": [],
@@ -254,6 +303,7 @@ def main(cfg: Config) -> None:
     # Baseline (epoch 0)
     model.eval()
     with torch.inference_mode():
+        # No train batches were run yet.
         dpo_train_batch_epoch = float("nan")
 
         dpo_train_full = compute_full_dataset_dpo_loss_from_loader(
@@ -264,6 +314,7 @@ def main(cfg: Config) -> None:
         )
 
         eval_bs = min(cfg.batch_size, cfg.nll_rand_eval_batch_size_cap)
+        # Random-batch NLL estimates for fast monitoring.
         nll_train_good_rand = compute_random_batch_nll(
             model,
             dpo_dataset["good_data"],
@@ -300,6 +351,7 @@ def main(cfg: Config) -> None:
         nll_margin_val_rand = nll_val_bad_rand - nll_val_good_rand
 
         if cfg.compute_full_nll_metrics:
+            # Optional full-dataset metrics (more expensive).
             nll_train_good_full = compute_full_dataset_nll(
                 model, dpo_dataset["good_data"], pad_token, device, batch_size=cfg.batch_size
             )
@@ -315,6 +367,7 @@ def main(cfg: Config) -> None:
             nll_val_bad_full = float("nan")
 
         full_eval_bs = min(cfg.batch_size, cfg.full_eval_batch_size_cap)
+        # Compare language likelihood of current model vs frozen reference.
         mean_like_model = compute_mean_token_likelihood(
             model, dn_eval_data, pad_token, device, batch_size=full_eval_bs
         )
@@ -323,6 +376,7 @@ def main(cfg: Config) -> None:
         )
 
         if cfg.compute_val_separation_metric:
+            # Compute class-separation correlation + per-sequence NLL lists.
             val_sep_corr, val_good_seq_nll, val_bad_seq_nll = compute_val_separation_correlation(
                 model,
                 val_dpo_dataset["good_data"],
@@ -359,6 +413,7 @@ def main(cfg: Config) -> None:
             dist2530_bad_seq_nll = []
 
     for key, value in [
+        # Persist baseline metrics as epoch 0 in history.
         ("epoch", 0),
         ("dpo_train_batch_epoch", dpo_train_batch_epoch),
         ("dpo_train_full", dpo_train_full),
@@ -417,15 +472,19 @@ def main(cfg: Config) -> None:
     )
 
     for epoch in tqdm(range(1, cfg.num_epochs + 1), desc="Epochs"):
+        # ---- Training phase ----
         model.train()
         epoch_batch_losses: List[float] = []
 
         for x_w, x_l in train_loader:
+            # Move preferred/dispreferred sequences to target device.
             x_w = x_w.to(device)
             x_l = x_l.to(device)
+            # Build next-token labels by shifting inputs.
             y_w = _build_labels_from_inputs(x_w, pad_token)
             y_l = _build_labels_from_inputs(x_l, pad_token)
 
+            # Standard optimization step.
             optimizer.zero_grad(set_to_none=True)
             loss = compute_dpo_loss_from_tensors(
                 model,
@@ -442,10 +501,13 @@ def main(cfg: Config) -> None:
 
             epoch_batch_losses.append(loss.item())
 
+        # Epoch-level LR update.
         scheduler.step()
 
+        # ---- Evaluation phase ----
         model.eval()
         with torch.inference_mode():
+            # Average training loss over all batches in this epoch.
             dpo_train_batch_epoch = sum(epoch_batch_losses) / max(len(epoch_batch_losses), 1)
 
             dpo_train_full = compute_full_dataset_dpo_loss_from_loader(
@@ -551,6 +613,7 @@ def main(cfg: Config) -> None:
                 dist2530_bad_seq_nll = []
 
         for key, value in [
+            # Append current epoch metrics to history.
             ("epoch", epoch),
             ("dpo_train_batch_epoch", dpo_train_batch_epoch),
             ("dpo_train_full", dpo_train_full),
@@ -609,12 +672,15 @@ def main(cfg: Config) -> None:
         )
 
         ckpt_path = checkpoint_dir / f"dpo_model_epoch{epoch}.pt"
+        # Save model checkpoint every epoch.
         torch.save(model.state_dict(), ckpt_path)
         print(f"Checkpoint saved: {ckpt_path}")
 
+        # Save cumulative history after each epoch for crash safety.
         history_json_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
 
     config_dump_path = history_json_path.parent / "config_used.json"
+    # Save exact run configuration for reproducibility.
     config_dump_path.write_text(json.dumps(asdict(cfg), indent=2), encoding="utf-8")
     print(f"Training completed. History saved to {history_json_path}")
     print(f"Config saved to {config_dump_path}")

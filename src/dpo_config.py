@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+# This dataclass centralizes every runtime setting used by the DPO training pipeline.
+# Keeping all defaults here makes experiments reproducible and easy to compare.
+
 @dataclass
 class Config:
     # Reproducibility
@@ -75,4 +78,5 @@ class Config:
     scheduler_gamma: float = 0.1
 
 
+# Single global configuration instance imported by the training entrypoint.
 CONFIG = Config()
