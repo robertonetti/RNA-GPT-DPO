@@ -1,0 +1,13 @@
+# Ignore everything by default
+*
+
+# Keep git metadata and this ignore file
+!.gitignore
+
+# Keep selected files/folders
+!README.md
+!DPO_train.py
+!src/
+!src/**
+!notebooks/
+!notebooks/**
