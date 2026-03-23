@@ -9,6 +9,32 @@ from torch.utils.data import DataLoader
 from src.dpo_data import _build_labels_from_inputs
 
 
+def compute_pearson_correlation(x: torch.Tensor, y: torch.Tensor) -> float:
+    """Compute Pearson correlation between two 1D tensors.
+
+    Inputs:
+    - x: Tensor of shape (N,).
+    - y: Tensor of shape (N,).
+
+    Output:
+    - Pearson r as Python float.
+    - Returns nan if inputs are empty, have different lengths, or zero variance.
+    """
+    if x.numel() == 0 or y.numel() == 0 or x.numel() != y.numel():
+        return float("nan")
+
+    x = x.float()
+    y = y.float()
+
+    x_centered = x - x.mean()
+    y_centered = y - y.mean()
+    denom = torch.sqrt((x_centered.pow(2).sum()) * (y_centered.pow(2).sum()))
+
+    if denom.item() == 0.0:
+        return float("nan")
+    return float((x_centered * y_centered).sum().item() / denom.item())
+
+
 def get_logprobs(logits: torch.Tensor, labels: torch.Tensor, pad_token: int) -> torch.Tensor:
     """Compute per-sequence log-probability from token logits and labels.
 
@@ -329,14 +355,6 @@ def compute_val_separation_correlation(
             ],
             dim=0,
         )
-
-        nll_centered = nll_values - nll_values.mean()
-        labels_centered = labels - labels.mean()
-        denom = torch.sqrt((nll_centered.pow(2).sum()) * (labels_centered.pow(2).sum()))
-
-        if denom.item() == 0.0:
-            pearson_r = float("nan")
-        else:
-            pearson_r = float((nll_centered * labels_centered).sum().item() / denom.item())
+        pearson_r = compute_pearson_correlation(nll_values, labels)
 
     return pearson_r, good_nll.tolist(), bad_nll.tolist()

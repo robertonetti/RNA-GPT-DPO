@@ -39,14 +39,42 @@ from src.dpo_metrics import (
     compute_full_dataset_dpo_loss_from_loader,
     compute_mean_token_likelihood,
     compute_val_separation_correlation,
+    compute_pearson_correlation,
 )
-from src.dpo_plotting import save_epoch_figures
+from src.dpo_plotting import save_epoch_figures, save_periodic_violin_history_figure
 from src.dpo_logging import print_run_configuration, print_eval_summary
 
 
 # ============================
 # Main training
 # ============================
+def _distance_to_reference(seq: str, reference_seq: str) -> float:
+    """Return an edit-like mismatch count against the fixed reference sequence."""
+    overlap = min(len(seq), len(reference_seq))
+    mismatches = sum(1 for a, b in zip(seq[:overlap], reference_seq[:overlap]) if a != b)
+    return float(mismatches + abs(len(seq) - len(reference_seq)))
+
+
+def _compute_distance_nll_correlation(
+    good_distances: torch.Tensor,
+    bad_distances: torch.Tensor,
+    good_nll: List[float],
+    bad_nll: List[float],
+) -> float:
+    """Compute Pearson(distance, NLL) over good+bad sequences of one split."""
+    if len(good_nll) == 0 and len(bad_nll) == 0:
+        return float("nan")
+
+    nll_values = torch.tensor(good_nll + bad_nll, dtype=torch.float32)
+    distance_values = torch.cat([good_distances, bad_distances], dim=0)
+    return compute_pearson_correlation(distance_values, nll_values)
+
+
+def _has_path(path_value: str | None) -> bool:
+    """Return True if a config path is provided (non-empty string)."""
+    return path_value is not None and path_value.strip() != ""
+
+
 def main(cfg: Config) -> None:
     """Run the complete epoch-based DPO pipeline.
 
@@ -92,6 +120,11 @@ def main(cfg: Config) -> None:
     # Resolve dataset/checkpoint paths against project root.
     dn_path = resolve_path(project_dir, cfg.dn_path)
     ckpt_path_gpt = resolve_path(project_dir, cfg.pretrained_ckpt_path)
+
+    dn_sequences = read_fasta(dn_path)
+    if len(dn_sequences) == 0:
+        raise ValueError(f"DN dataset is empty: {dn_path}")
+    reference_seq = dn_sequences[0]
 
     # Build tokenizer alphabet directly from DN file symbols.
     with dn_path.open("r", encoding="utf-8") as f:
@@ -181,24 +214,85 @@ def main(cfg: Config) -> None:
     train_bad_fasta_path = resolve_path(project_dir, cfg.train_bad_fasta_path)
     train_csv_mapping_path = resolve_path(project_dir, cfg.train_csv_mapping_path)
 
-    val_good_fasta_path = resolve_path(project_dir, cfg.val_good_fasta_path)
-    val_bad_fasta_path = resolve_path(project_dir, cfg.val_bad_fasta_path)
-    val_csv_mapping_path = resolve_path(project_dir, cfg.val_csv_mapping_path)
+    val_enabled = (
+        _has_path(cfg.val_good_fasta_path)
+        and _has_path(cfg.val_bad_fasta_path)
+        and _has_path(cfg.val_csv_mapping_path)
+    )
+    vae_enabled = _has_path(cfg.vae_good_fasta_path) and _has_path(cfg.vae_bad_fasta_path)
+    dist2530_enabled = _has_path(cfg.dist2530_good_fasta_path) and _has_path(cfg.dist2530_bad_fasta_path)
 
-    vae_good_fasta_path = resolve_path(project_dir, cfg.vae_good_fasta_path)
-    vae_bad_fasta_path = resolve_path(project_dir, cfg.vae_bad_fasta_path)
+    val_good_fasta_path = resolve_path(project_dir, cfg.val_good_fasta_path) if val_enabled else None
+    val_bad_fasta_path = resolve_path(project_dir, cfg.val_bad_fasta_path) if val_enabled else None
+    val_csv_mapping_path = resolve_path(project_dir, cfg.val_csv_mapping_path) if val_enabled else None
 
-    dist2530_good_fasta_path = resolve_path(project_dir, cfg.dist2530_good_fasta_path)
-    dist2530_bad_fasta_path = resolve_path(project_dir, cfg.dist2530_bad_fasta_path)
+    vae_good_fasta_path = resolve_path(project_dir, cfg.vae_good_fasta_path) if vae_enabled else None
+    vae_bad_fasta_path = resolve_path(project_dir, cfg.vae_bad_fasta_path) if vae_enabled else None
+
+    dist2530_good_fasta_path = (
+        resolve_path(project_dir, cfg.dist2530_good_fasta_path) if dist2530_enabled else None
+    )
+    dist2530_bad_fasta_path = (
+        resolve_path(project_dir, cfg.dist2530_bad_fasta_path) if dist2530_enabled else None
+    )
 
     checkpoint_dir = resolve_path(project_dir, cfg.checkpoint_dir)
     image_dir = resolve_path(project_dir, cfg.image_dir)
     history_json_path = resolve_path(project_dir, cfg.history_json_path)
+    dataset_descriptions = {
+        "train": cfg.train_dataset_description,
+        "val": cfg.val_dataset_description,
+        "val_1": cfg.vae_dataset_description,
+        "val_2": cfg.dist2530_dataset_description,
+    }
 
     # Ensure output directories always exist before writing files.
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     image_dir.mkdir(parents=True, exist_ok=True)
     history_json_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load raw sequences once to compute distance-to-reference metrics.
+    train_good_sequences = read_fasta(train_good_fasta_path)
+    train_bad_sequences = read_fasta(train_bad_fasta_path)
+    val_good_sequences = read_fasta(val_good_fasta_path) if val_enabled else []
+    val_bad_sequences = read_fasta(val_bad_fasta_path) if val_enabled else []
+    vae_good_sequences = read_fasta(vae_good_fasta_path) if vae_enabled else []
+    vae_bad_sequences = read_fasta(vae_bad_fasta_path) if vae_enabled else []
+    dist2530_good_sequences = read_fasta(dist2530_good_fasta_path) if dist2530_enabled else []
+    dist2530_bad_sequences = read_fasta(dist2530_bad_fasta_path) if dist2530_enabled else []
+
+    train_good_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in train_good_sequences],
+        dtype=torch.float32,
+    )
+    train_bad_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in train_bad_sequences],
+        dtype=torch.float32,
+    )
+    val_good_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in val_good_sequences],
+        dtype=torch.float32,
+    )
+    val_bad_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in val_bad_sequences],
+        dtype=torch.float32,
+    )
+    vae_good_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in vae_good_sequences],
+        dtype=torch.float32,
+    )
+    vae_bad_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in vae_bad_sequences],
+        dtype=torch.float32,
+    )
+    dist2530_good_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in dist2530_good_sequences],
+        dtype=torch.float32,
+    )
+    dist2530_bad_distances = torch.tensor(
+        [_distance_to_reference(seq, reference_seq) for seq in dist2530_bad_sequences],
+        dtype=torch.float32,
+    )
 
     # Load datasets 
     dpo_dataset = load_dpo_dataset(
@@ -210,33 +304,40 @@ def main(cfg: Config) -> None:
         encode_fn=encode,
     )
 
-    val_dpo_dataset = load_dpo_dataset( 
-        good_fasta_path=val_good_fasta_path,
-        bad_fasta_path=val_bad_fasta_path,
-        csv_path=val_csv_mapping_path,
-        block_size=cfg.block_size,
-        pad_token=pad_token,
-        encode_fn=encode,
-    )
+    if val_enabled:
+        val_dpo_dataset = load_dpo_dataset(
+            good_fasta_path=val_good_fasta_path,
+            bad_fasta_path=val_bad_fasta_path,
+            csv_path=val_csv_mapping_path,
+            block_size=cfg.block_size,
+            pad_token=pad_token,
+            encode_fn=encode,
+        )
+    else:
+        val_dpo_dataset = None
 
-    vae_good_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(vae_good_fasta_path)] # shape (N_vae_good, block_size)
-    vae_bad_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(vae_bad_fasta_path)] # shape (N_vae_bad, block_size)
+    vae_good_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in vae_good_sequences] # shape (N_vae_good, block_size)
+    vae_bad_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in vae_bad_sequences] # shape (N_vae_bad, block_size)
 
     dist2530_good_data = [
-        pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(dist2530_good_fasta_path)
+        pad_encode(s, cfg.block_size, pad_token, encode) for s in dist2530_good_sequences
     ] # shape (N_dist2530_good, block_size)
     dist2530_bad_data = [
-        pad_encode(s, cfg.block_size, pad_token, encode) for s in read_fasta(dist2530_bad_fasta_path)
+        pad_encode(s, cfg.block_size, pad_token, encode) for s in dist2530_bad_sequences
     ] # shape (N_dist2530_bad, block_size)
 
     # Create DataLoaders for training/validation pairs and extra eval sets.
     train_pair_dataset = PreferencePairDataset(dpo_dataset) # shape (N_train_pairs, 2) where each item is (good_idx, bad_idx)
-    val_pair_dataset = PreferencePairDataset(val_dpo_dataset) # shape (N_val_pairs, 2) where each item is (good_idx, bad_idx)
+    val_pair_dataset = PreferencePairDataset(val_dpo_dataset) if val_enabled else None # shape (N_val_pairs, 2) where each item is (good_idx, bad_idx)
 
     # Train loader is shuffled; eval loaders are deterministic.
     train_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=False) # shape (N_train_pairs // batch_size, batch_size, 2)
     train_eval_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False) # shape (N_train_pairs // batch_size, batch_size, 2)
-    val_loader = DataLoader(val_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False) # shape (N_val_pairs // batch_size, batch_size, 2)
+    val_loader = (
+        DataLoader(val_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
+        if val_enabled
+        else None
+    ) # shape (N_val_pairs // batch_size, batch_size, 2)
 
     # 
     dn_full_data = dn_dataset["val"]["data"]
@@ -257,7 +358,7 @@ def main(cfg: Config) -> None:
         cfg=cfg,
         device=device,
         train_pair_count=len(train_pair_dataset),
-        val_pair_count=len(val_pair_dataset),
+        val_pair_count=len(val_pair_dataset) if val_pair_dataset is not None else 0,
         vae_good_count=len(vae_good_data),
         vae_bad_count=len(vae_bad_data),
         dist2530_good_count=len(dist2530_good_data),
@@ -289,15 +390,21 @@ def main(cfg: Config) -> None:
         "nll_val_bad_full": [],
         "mean_like_model": [],
         "mean_like_ref": [],
+        "train_good_seq_nll": [],
+        "train_bad_seq_nll": [],
+        "train_dist_nll_corr": [],
         "val_sep_corr": [],
         "val_good_seq_nll": [],
         "val_bad_seq_nll": [],
+        "val_dist_nll_corr": [],
         "vae_sep_corr": [],
         "vae_good_seq_nll": [],
         "vae_bad_seq_nll": [],
+        "vae_dist_nll_corr": [],
         "dist2530_sep_corr": [],
         "dist2530_good_seq_nll": [],
         "dist2530_bad_seq_nll": [],
+        "dist2530_dist_nll_corr": [],
     }
 
     # Baseline (epoch 0)
@@ -309,8 +416,12 @@ def main(cfg: Config) -> None:
         dpo_train_full = compute_full_dataset_dpo_loss_from_loader(
             model, ref_model, train_eval_loader, pad_token, device, beta=cfg.beta
         )
-        dpo_val_full = compute_full_dataset_dpo_loss_from_loader(
-            model, ref_model, val_loader, pad_token, device, beta=cfg.beta
+        dpo_val_full = (
+            compute_full_dataset_dpo_loss_from_loader(
+                model, ref_model, val_loader, pad_token, device, beta=cfg.beta
+            )
+            if val_loader is not None
+            else float("nan")
         )
 
         eval_bs = min(cfg.batch_size, cfg.nll_rand_eval_batch_size_cap)
@@ -331,22 +442,26 @@ def main(cfg: Config) -> None:
             n_batches=cfg.nll_rand_n_batches,
             batch_size=eval_bs,
         )
-        nll_val_good_rand = compute_random_batch_nll(
-            model,
-            val_dpo_dataset["good_data"],
-            pad_token,
-            device,
-            n_batches=cfg.nll_rand_n_batches,
-            batch_size=eval_bs,
-        )
-        nll_val_bad_rand = compute_random_batch_nll(
-            model,
-            val_dpo_dataset["bad_data"],
-            pad_token,
-            device,
-            n_batches=cfg.nll_rand_n_batches,
-            batch_size=eval_bs,
-        )
+        if val_enabled:
+            nll_val_good_rand = compute_random_batch_nll(
+                model,
+                val_dpo_dataset["good_data"],
+                pad_token,
+                device,
+                n_batches=cfg.nll_rand_n_batches,
+                batch_size=eval_bs,
+            )
+            nll_val_bad_rand = compute_random_batch_nll(
+                model,
+                val_dpo_dataset["bad_data"],
+                pad_token,
+                device,
+                n_batches=cfg.nll_rand_n_batches,
+                batch_size=eval_bs,
+            )
+        else:
+            nll_val_good_rand = float("nan")
+            nll_val_bad_rand = float("nan")
         nll_margin_train_rand = nll_train_bad_rand - nll_train_good_rand
         nll_margin_val_rand = nll_val_bad_rand - nll_val_good_rand
 
@@ -355,12 +470,16 @@ def main(cfg: Config) -> None:
             nll_train_good_full = compute_full_dataset_nll(
                 model, dpo_dataset["good_data"], pad_token, device, batch_size=cfg.batch_size
             )
-            nll_val_good_full = compute_full_dataset_nll(
-                model, val_dpo_dataset["good_data"], pad_token, device, batch_size=cfg.batch_size
-            )
-            nll_val_bad_full = compute_full_dataset_nll(
-                model, val_dpo_dataset["bad_data"], pad_token, device, batch_size=cfg.batch_size
-            )
+            if val_enabled:
+                nll_val_good_full = compute_full_dataset_nll(
+                    model, val_dpo_dataset["good_data"], pad_token, device, batch_size=cfg.batch_size
+                )
+                nll_val_bad_full = compute_full_dataset_nll(
+                    model, val_dpo_dataset["bad_data"], pad_token, device, batch_size=cfg.batch_size
+                )
+            else:
+                nll_val_good_full = float("nan")
+                nll_val_bad_full = float("nan")
         else:
             nll_train_good_full = float("nan")
             nll_val_good_full = float("nan")
@@ -377,40 +496,99 @@ def main(cfg: Config) -> None:
 
         if cfg.compute_val_separation_metric:
             # Compute class-separation correlation + per-sequence NLL lists.
-            val_sep_corr, val_good_seq_nll, val_bad_seq_nll = compute_val_separation_correlation(
+            _, train_good_seq_nll, train_bad_seq_nll = compute_val_separation_correlation(
                 model,
-                val_dpo_dataset["good_data"],
-                val_dpo_dataset["bad_data"],
+                dpo_dataset["good_data"],
+                dpo_dataset["bad_data"],
                 pad_token,
                 device,
                 batch_size=full_eval_bs,
             )
-            vae_sep_corr, vae_good_seq_nll, vae_bad_seq_nll = compute_val_separation_correlation(
-                model,
-                vae_good_data,
-                vae_bad_data,
-                pad_token,
-                device,
-                batch_size=full_eval_bs,
+
+            train_dist_nll_corr = _compute_distance_nll_correlation(
+                train_good_distances,
+                train_bad_distances,
+                train_good_seq_nll,
+                train_bad_seq_nll,
             )
-            dist2530_sep_corr, dist2530_good_seq_nll, dist2530_bad_seq_nll = compute_val_separation_correlation(
-                model,
-                dist2530_good_data,
-                dist2530_bad_data,
-                pad_token,
-                device,
-                batch_size=full_eval_bs,
-            )
+            if val_enabled:
+                val_sep_corr, val_good_seq_nll, val_bad_seq_nll = compute_val_separation_correlation(
+                    model,
+                    val_dpo_dataset["good_data"],
+                    val_dpo_dataset["bad_data"],
+                    pad_token,
+                    device,
+                    batch_size=full_eval_bs,
+                )
+                val_dist_nll_corr = _compute_distance_nll_correlation(
+                    val_good_distances,
+                    val_bad_distances,
+                    val_good_seq_nll,
+                    val_bad_seq_nll,
+                )
+            else:
+                val_sep_corr = float("nan")
+                val_good_seq_nll = []
+                val_bad_seq_nll = []
+                val_dist_nll_corr = float("nan")
+
+            if vae_enabled:
+                vae_sep_corr, vae_good_seq_nll, vae_bad_seq_nll = compute_val_separation_correlation(
+                    model,
+                    vae_good_data,
+                    vae_bad_data,
+                    pad_token,
+                    device,
+                    batch_size=full_eval_bs,
+                )
+                vae_dist_nll_corr = _compute_distance_nll_correlation(
+                    vae_good_distances,
+                    vae_bad_distances,
+                    vae_good_seq_nll,
+                    vae_bad_seq_nll,
+                )
+            else:
+                vae_sep_corr = float("nan")
+                vae_good_seq_nll = []
+                vae_bad_seq_nll = []
+                vae_dist_nll_corr = float("nan")
+
+            if dist2530_enabled:
+                dist2530_sep_corr, dist2530_good_seq_nll, dist2530_bad_seq_nll = compute_val_separation_correlation(
+                    model,
+                    dist2530_good_data,
+                    dist2530_bad_data,
+                    pad_token,
+                    device,
+                    batch_size=full_eval_bs,
+                )
+                dist2530_dist_nll_corr = _compute_distance_nll_correlation(
+                    dist2530_good_distances,
+                    dist2530_bad_distances,
+                    dist2530_good_seq_nll,
+                    dist2530_bad_seq_nll,
+                )
+            else:
+                dist2530_sep_corr = float("nan")
+                dist2530_good_seq_nll = []
+                dist2530_bad_seq_nll = []
+                dist2530_dist_nll_corr = float("nan")
         else:
+            train_good_seq_nll = []
+            train_bad_seq_nll = []
+            train_dist_nll_corr = float("nan")
             val_sep_corr = float("nan")
             val_good_seq_nll = []
             val_bad_seq_nll = []
+            val_dist_nll_corr = float("nan")
             vae_sep_corr = float("nan")
             vae_good_seq_nll = []
             vae_bad_seq_nll = []
+            vae_dist_nll_corr = float("nan")
             dist2530_sep_corr = float("nan")
             dist2530_good_seq_nll = []
             dist2530_bad_seq_nll = []
+            dist2530_dist_nll_corr = float("nan")
 
     for key, value in [
         # Persist baseline metrics as epoch 0 in history.
@@ -429,15 +607,21 @@ def main(cfg: Config) -> None:
         ("nll_val_bad_full", nll_val_bad_full),
         ("mean_like_model", mean_like_model),
         ("mean_like_ref", mean_like_ref),
+        ("train_good_seq_nll", train_good_seq_nll),
+        ("train_bad_seq_nll", train_bad_seq_nll),
+        ("train_dist_nll_corr", train_dist_nll_corr),
         ("val_sep_corr", val_sep_corr),
         ("val_good_seq_nll", val_good_seq_nll),
         ("val_bad_seq_nll", val_bad_seq_nll),
+        ("val_dist_nll_corr", val_dist_nll_corr),
         ("vae_sep_corr", vae_sep_corr),
         ("vae_good_seq_nll", vae_good_seq_nll),
         ("vae_bad_seq_nll", vae_bad_seq_nll),
+        ("vae_dist_nll_corr", vae_dist_nll_corr),
         ("dist2530_sep_corr", dist2530_sep_corr),
         ("dist2530_good_seq_nll", dist2530_good_seq_nll),
         ("dist2530_bad_seq_nll", dist2530_bad_seq_nll),
+        ("dist2530_dist_nll_corr", dist2530_dist_nll_corr),
     ]:
         history[key].append(value)
 
@@ -445,6 +629,13 @@ def main(cfg: Config) -> None:
         history,
         main_path=image_dir / "epoch_000_main.png",
         violin_path=image_dir / "epoch_000_violin.png",
+        dataset_descriptions=dataset_descriptions,
+    )
+    save_periodic_violin_history_figure(
+        history=history,
+        output_path=image_dir / "epoch_000_violin_history.png",
+        every_n_epochs=cfg.violin_save_every_n_epochs,
+        dataset_descriptions=dataset_descriptions,
     )
 
     print_eval_summary(
@@ -470,6 +661,8 @@ def main(cfg: Config) -> None:
         nll_val_good_full=nll_val_good_full,
         nll_val_bad_full=nll_val_bad_full,
     )
+
+    eval_period = max(cfg.violin_save_every_n_epochs, 1)
 
     for epoch in tqdm(range(1, cfg.num_epochs + 1), desc="Epochs"):
         # ---- Training phase ----
@@ -504,6 +697,17 @@ def main(cfg: Config) -> None:
         # Epoch-level LR update.
         scheduler.step()
 
+        should_evaluate = (epoch % eval_period) == 0
+        if not should_evaluate:
+            ckpt_path = checkpoint_dir / f"dpo_model_epoch{epoch}.pt"
+            # Save model checkpoint every epoch.
+            torch.save(model.state_dict(), ckpt_path)
+            print(f"Checkpoint saved: {ckpt_path}")
+
+            # History is updated only on evaluation epochs.
+            history_json_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+            continue
+
         # ---- Evaluation phase ----
         model.eval()
         with torch.inference_mode():
@@ -513,8 +717,12 @@ def main(cfg: Config) -> None:
             dpo_train_full = compute_full_dataset_dpo_loss_from_loader(
                 model, ref_model, train_eval_loader, pad_token, device, beta=cfg.beta
             )
-            dpo_val_full = compute_full_dataset_dpo_loss_from_loader(
-                model, ref_model, val_loader, pad_token, device, beta=cfg.beta
+            dpo_val_full = (
+                compute_full_dataset_dpo_loss_from_loader(
+                    model, ref_model, val_loader, pad_token, device, beta=cfg.beta
+                )
+                if val_loader is not None
+                else float("nan")
             )
 
             eval_bs = min(cfg.batch_size, cfg.nll_rand_eval_batch_size_cap)
@@ -534,22 +742,26 @@ def main(cfg: Config) -> None:
                 n_batches=cfg.nll_rand_n_batches,
                 batch_size=eval_bs,
             )
-            nll_val_good_rand = compute_random_batch_nll(
-                model,
-                val_dpo_dataset["good_data"],
-                pad_token,
-                device,
-                n_batches=cfg.nll_rand_n_batches,
-                batch_size=eval_bs,
-            )
-            nll_val_bad_rand = compute_random_batch_nll(
-                model,
-                val_dpo_dataset["bad_data"],
-                pad_token,
-                device,
-                n_batches=cfg.nll_rand_n_batches,
-                batch_size=eval_bs,
-            )
+            if val_enabled:
+                nll_val_good_rand = compute_random_batch_nll(
+                    model,
+                    val_dpo_dataset["good_data"],
+                    pad_token,
+                    device,
+                    n_batches=cfg.nll_rand_n_batches,
+                    batch_size=eval_bs,
+                )
+                nll_val_bad_rand = compute_random_batch_nll(
+                    model,
+                    val_dpo_dataset["bad_data"],
+                    pad_token,
+                    device,
+                    n_batches=cfg.nll_rand_n_batches,
+                    batch_size=eval_bs,
+                )
+            else:
+                nll_val_good_rand = float("nan")
+                nll_val_bad_rand = float("nan")
             nll_margin_train_rand = nll_train_bad_rand - nll_train_good_rand
             nll_margin_val_rand = nll_val_bad_rand - nll_val_good_rand
 
@@ -557,12 +769,16 @@ def main(cfg: Config) -> None:
                 nll_train_good_full = compute_full_dataset_nll(
                     model, dpo_dataset["good_data"], pad_token, device, batch_size=cfg.batch_size
                 )
-                nll_val_good_full = compute_full_dataset_nll(
-                    model, val_dpo_dataset["good_data"], pad_token, device, batch_size=cfg.batch_size
-                )
-                nll_val_bad_full = compute_full_dataset_nll(
-                    model, val_dpo_dataset["bad_data"], pad_token, device, batch_size=cfg.batch_size
-                )
+                if val_enabled:
+                    nll_val_good_full = compute_full_dataset_nll(
+                        model, val_dpo_dataset["good_data"], pad_token, device, batch_size=cfg.batch_size
+                    )
+                    nll_val_bad_full = compute_full_dataset_nll(
+                        model, val_dpo_dataset["bad_data"], pad_token, device, batch_size=cfg.batch_size
+                    )
+                else:
+                    nll_val_good_full = float("nan")
+                    nll_val_bad_full = float("nan")
             else:
                 nll_train_good_full = float("nan")
                 nll_val_good_full = float("nan")
@@ -577,40 +793,99 @@ def main(cfg: Config) -> None:
             )
 
             if cfg.compute_val_separation_metric:
-                val_sep_corr, val_good_seq_nll, val_bad_seq_nll = compute_val_separation_correlation(
+                _, train_good_seq_nll, train_bad_seq_nll = compute_val_separation_correlation(
                     model,
-                    val_dpo_dataset["good_data"],
-                    val_dpo_dataset["bad_data"],
+                    dpo_dataset["good_data"],
+                    dpo_dataset["bad_data"],
                     pad_token,
                     device,
                     batch_size=full_eval_bs,
                 )
-                vae_sep_corr, vae_good_seq_nll, vae_bad_seq_nll = compute_val_separation_correlation(
-                    model,
-                    vae_good_data,
-                    vae_bad_data,
-                    pad_token,
-                    device,
-                    batch_size=full_eval_bs,
+
+                train_dist_nll_corr = _compute_distance_nll_correlation(
+                    train_good_distances,
+                    train_bad_distances,
+                    train_good_seq_nll,
+                    train_bad_seq_nll,
                 )
-                dist2530_sep_corr, dist2530_good_seq_nll, dist2530_bad_seq_nll = compute_val_separation_correlation(
-                    model,
-                    dist2530_good_data,
-                    dist2530_bad_data,
-                    pad_token,
-                    device,
-                    batch_size=full_eval_bs,
-                )
+                if val_enabled:
+                    val_sep_corr, val_good_seq_nll, val_bad_seq_nll = compute_val_separation_correlation(
+                        model,
+                        val_dpo_dataset["good_data"],
+                        val_dpo_dataset["bad_data"],
+                        pad_token,
+                        device,
+                        batch_size=full_eval_bs,
+                    )
+                    val_dist_nll_corr = _compute_distance_nll_correlation(
+                        val_good_distances,
+                        val_bad_distances,
+                        val_good_seq_nll,
+                        val_bad_seq_nll,
+                    )
+                else:
+                    val_sep_corr = float("nan")
+                    val_good_seq_nll = []
+                    val_bad_seq_nll = []
+                    val_dist_nll_corr = float("nan")
+
+                if vae_enabled:
+                    vae_sep_corr, vae_good_seq_nll, vae_bad_seq_nll = compute_val_separation_correlation(
+                        model,
+                        vae_good_data,
+                        vae_bad_data,
+                        pad_token,
+                        device,
+                        batch_size=full_eval_bs,
+                    )
+                    vae_dist_nll_corr = _compute_distance_nll_correlation(
+                        vae_good_distances,
+                        vae_bad_distances,
+                        vae_good_seq_nll,
+                        vae_bad_seq_nll,
+                    )
+                else:
+                    vae_sep_corr = float("nan")
+                    vae_good_seq_nll = []
+                    vae_bad_seq_nll = []
+                    vae_dist_nll_corr = float("nan")
+
+                if dist2530_enabled:
+                    dist2530_sep_corr, dist2530_good_seq_nll, dist2530_bad_seq_nll = compute_val_separation_correlation(
+                        model,
+                        dist2530_good_data,
+                        dist2530_bad_data,
+                        pad_token,
+                        device,
+                        batch_size=full_eval_bs,
+                    )
+                    dist2530_dist_nll_corr = _compute_distance_nll_correlation(
+                        dist2530_good_distances,
+                        dist2530_bad_distances,
+                        dist2530_good_seq_nll,
+                        dist2530_bad_seq_nll,
+                    )
+                else:
+                    dist2530_sep_corr = float("nan")
+                    dist2530_good_seq_nll = []
+                    dist2530_bad_seq_nll = []
+                    dist2530_dist_nll_corr = float("nan")
             else:
+                train_good_seq_nll = []
+                train_bad_seq_nll = []
+                train_dist_nll_corr = float("nan")
                 val_sep_corr = float("nan")
                 val_good_seq_nll = []
                 val_bad_seq_nll = []
+                val_dist_nll_corr = float("nan")
                 vae_sep_corr = float("nan")
                 vae_good_seq_nll = []
                 vae_bad_seq_nll = []
+                vae_dist_nll_corr = float("nan")
                 dist2530_sep_corr = float("nan")
                 dist2530_good_seq_nll = []
                 dist2530_bad_seq_nll = []
+                dist2530_dist_nll_corr = float("nan")
 
         for key, value in [
             # Append current epoch metrics to history.
@@ -629,15 +904,21 @@ def main(cfg: Config) -> None:
             ("nll_val_bad_full", nll_val_bad_full),
             ("mean_like_model", mean_like_model),
             ("mean_like_ref", mean_like_ref),
+            ("train_good_seq_nll", train_good_seq_nll),
+            ("train_bad_seq_nll", train_bad_seq_nll),
+            ("train_dist_nll_corr", train_dist_nll_corr),
             ("val_sep_corr", val_sep_corr),
             ("val_good_seq_nll", val_good_seq_nll),
             ("val_bad_seq_nll", val_bad_seq_nll),
+            ("val_dist_nll_corr", val_dist_nll_corr),
             ("vae_sep_corr", vae_sep_corr),
             ("vae_good_seq_nll", vae_good_seq_nll),
             ("vae_bad_seq_nll", vae_bad_seq_nll),
+            ("vae_dist_nll_corr", vae_dist_nll_corr),
             ("dist2530_sep_corr", dist2530_sep_corr),
             ("dist2530_good_seq_nll", dist2530_good_seq_nll),
             ("dist2530_bad_seq_nll", dist2530_bad_seq_nll),
+            ("dist2530_dist_nll_corr", dist2530_dist_nll_corr),
         ]:
             history[key].append(value)
 
@@ -645,7 +926,15 @@ def main(cfg: Config) -> None:
             history,
             main_path=image_dir / f"epoch_{epoch:03d}_main.png",
             violin_path=image_dir / f"epoch_{epoch:03d}_violin.png",
+            dataset_descriptions=dataset_descriptions,
         )
+        if (epoch % cfg.violin_save_every_n_epochs == 0) or (epoch == cfg.num_epochs):
+            save_periodic_violin_history_figure(
+                history=history,
+                output_path=image_dir / f"epoch_{epoch:03d}_violin_history.png",
+                every_n_epochs=cfg.violin_save_every_n_epochs,
+                dataset_descriptions=dataset_descriptions,
+            )
 
         print_eval_summary(
             title="EPOCH EVALUATION",

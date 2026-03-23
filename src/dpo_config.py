@@ -19,31 +19,35 @@ class Config:
     pretrained_ckpt_path: str = "checkpoints/checkpoints_giovanni/RF00028_aligned_GPTTransformer_th10_lr5e-4_batch16_embd64_nhead8_nlayer4_longer_best.pt"
 
     # DPO train/val pair datasets
-    train_good_fasta_path: str = "data/split_data_197/DTp_train_split_85_197.fasta"
-    train_bad_fasta_path: str = "data/split_data_197/DTm_train_split_85_197.fasta"
-    train_csv_mapping_path: str = "data/clustering_methods/train_split_85/top5_bin.csv"
+    train_good_fasta_path: str = "data/split_data_197/vae_plus_split/DTp_train_non_vae_minus.fasta"
+    train_bad_fasta_path: str = "data/split_data_197/vae_plus_split/DTm_train_non_vae_minus.fasta"
+    train_csv_mapping_path: str = "data/clustering_methods/train_split_vae_plus/top5_bin.csv"
+    train_dataset_description: str = "Train Dataset"
 
-    val_good_fasta_path: str = "data/split_data_197/DTp_test_split_15_197.fasta"
-    val_bad_fasta_path: str = "data/split_data_197/DTm_test_split_15_197.fasta"
-    val_csv_mapping_path: str = "data/clustering_methods/test_split_15/top5_bin.csv"
+    val_good_fasta_path: str | None = "data/split_data_197/vae_plus_split/DTp_val_VAE_plus.fasta"
+    val_bad_fasta_path: str | None = "data/split_data_197/vae_plus_split/DTm_val_VAE_plus.fasta"
+    val_csv_mapping_path: str | None = "data/clustering_methods/test_split_vae_plus/top5_bin.csv"
+    val_dataset_description: str = "Validation Dataset (VAE sequences)"
 
     # Extra datasets used for violin-based separation analysis
-    vae_good_fasta_path: str = "data/split_data_197/vae_split_25_30/DTp_vae_dist_25_30_197.fasta"
-    vae_bad_fasta_path: str = "data/split_data_197/vae_split_25_30/DTm_vae_dist_25_30_197.fasta"
+    vae_good_fasta_path: str | None = "data/split_data_197/vae_plus_split/DTp_val_VAE_plus_25_30.fasta"
+    vae_bad_fasta_path: str | None = "data/split_data_197/vae_plus_split/DTm_val_VAE_plus_25_30.fasta"
+    vae_dataset_description: str = "Validation Dataset (VAE sequences) - Dist 25-30 subset"
 
-    dist2530_good_fasta_path: str = "data/split_data_197/DTp_test_split_15_dist_25_30_197.fasta"
-    dist2530_bad_fasta_path: str = "data/split_data_197/DTm_test_split_15_dist_25_30_197.fasta"
+    dist2530_good_fasta_path: str | None = None #"data/split_data_197/vae_plus_split/DTp_val_VAE_plus_25_30.fasta"
+    dist2530_bad_fasta_path: str | None = None #"data/split_data_197/vae_plus_split/DTm_val_VAE_plus_25_30.fasta"
+    dist2530_dataset_description: str = "Dist 25-30 validation split"
 
     # Output paths
-    checkpoint_dir: str = "checkpoints/checkpoints_roberto/"
-    image_dir: str = "images_roberto"
-    history_json_path: str = "images_roberto/history.json"
+    checkpoint_dir: str = "checkpoints/checkpoints_roberto/test_on_VAE/top5_b03/"
+    image_dir: str = "images_roberto/test_on_VAE/top5_b03/"
+    history_json_path: str = "images_roberto/test_on_VAE/top5_b03/history.json"
 
     # Training hyperparameters
     block_size: int = 198
     batch_size: int = 1024
     learning_rate: float = 1e-4
-    num_epochs: int = 20
+    num_epochs: int = 500
     beta: float = 0.3
 
     # Model architecture
@@ -72,6 +76,9 @@ class Config:
 
     # Full-metric batch sizes
     full_eval_batch_size_cap: int = 256
+
+    # Save the epoch-history violin figure every N epochs (plus baseline epoch 0).
+    violin_save_every_n_epochs: int = 10
 
     # Scheduler (mirrors notebook behavior)
     scheduler_step_size: int = 10000
