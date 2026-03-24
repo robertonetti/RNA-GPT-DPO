@@ -1,5 +1,6 @@
 # Ignore everything by default
 *
+src/__pycache__/
 
 # Keep git metadata and this ignore file
 !.gitignore
@@ -7,7 +8,7 @@
 # Keep selected files/folders
 !README.md
 !DPO_train.py
-!src/
-!src/**
+# !src/
+!src/dpo*
 !notebooks/
 !notebooks/**
