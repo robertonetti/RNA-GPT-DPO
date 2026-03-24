@@ -19,35 +19,39 @@ class Config:
     pretrained_ckpt_path: str = "checkpoints/checkpoints_giovanni/RF00028_aligned_GPTTransformer_th10_lr5e-4_batch16_embd64_nhead8_nlayer4_longer_best.pt"
 
     # DPO train/val pair datasets
-    train_good_fasta_path: str = "data/split_data_197/split_0.15_vae25_30_in_test/DTp_train_split_85_excluding_vae_25_30.fasta"
-    train_bad_fasta_path: str = "data/split_data_197/split_0.15_vae25_30_in_test/DTm_train_split_85_excluding_vae_25_30.fasta"
-    train_csv_mapping_path: str = "data/clustering_methods/split_0.15_vae25_30_in_train/top5_bin.csv"
-    train_dataset_description: str = "Train Dataset (without VAE sequences in 25-30 distance range)"
+    train_good_fasta_path: str = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTp_train_excluding-vae-25-30.fasta"   # split train in funzionali
+    train_bad_fasta_path: str = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTm_train_excluding-vae-25-30.fasta"    # split train in non funzionali
+    train_csv_mapping_path: str = "data/pairings/pair_split_fraction-0.15_ add-vae-25-30-to-validation/pair_train/top5_bin.csv"                            # pairing csv file
+    train_dataset_description: str = "Train Dataset (without VAE sequences in 25-30 distance range)"                              # titolo del plot che descrive questo dataset
 
-    val_good_fasta_path: str | None = "data/split_data_197/split_0.15_vae25_30_in_test/DTp_test_split_15_plus_excluded_vae_25_30.fasta"
-    val_bad_fasta_path: str | None = "data/split_data_197/split_0.15_vae25_30_in_test/DTm_test_split_15_plus_excluded_vae_25_30.fasta"
-    val_csv_mapping_path: str | None = "data/clustering_methods/split_0.15_vae25_30_in_test/top5_bin.csv"
-    val_dataset_description: str = "Validation Dataset (with VAE sequences in 25-30 distance range)"
+    val_good_fasta_path: str = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTp_val_plus-vae-25-30.fasta"  # split test in funzionali
+    val_bad_fasta_path: str  = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTm_val_plus-vae-25-30.fasta"  # split test in non funzionali
+    val_csv_mapping_path: str = "data/pairings/pair_split_fraction-0.15_ add-vae-25-30-to-validation/pair_validation/top5_bin.csv"                               # pairing csv file                           
+    val_dataset_description: str = "Validation Dataset (with VAE sequences in 25-30 distance range)"                              # titolo del plot che descrive questo dataset
 
-    # Extra datasets used for violin-based separation analysis
-    val_1_good_fasta_path: str | None = "data/split_data_197/split_0.15_vae25_30_in_test/DTp_excluded_vae_25_30_added_to_test.fasta"
-    val_1_bad_fasta_path: str | None =  "data/split_data_197/split_0.15_vae25_30_in_test/DTm_excluded_vae_25_30_added_to_test.fasta"
-    val_1_dataset_description: str = "VAE sequences in 25-30 distance range"
+    # OPTIONAL Extra datasets used for violin-based separation analysis
 
-    val_2_good_fasta_path: str | None = None #"data/split_data_197/vae_plus_split/DTp_val_VAE_plus_25_30.fasta"
-    val_2_bad_fasta_path: str | None = None #"data/split_data_197/vae_plus_split/DTm_val_VAE_plus_25_30.fasta"
-    val_2_dataset_description: str = "Dist 25-30 validation split"
+    # primo validation set opzionale
+    val_1_good_fasta_path: str | None = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTp_excluded-vae-at-dist-25-30.fasta"  # funzionali primo validation ulteriore (OPZIONALE)
+    val_1_bad_fasta_path: str | None =  "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTm_excluded-vae-at-dist-25-30.fasta"  # non funzionali primo validation ulteriore (OPZIONALE)
+    val_1_dataset_description: str = "VAE sequences in 25-30 distance range"                                                          # titolo del plot che descrive questo dataset
+
+    # secondo validation set opzionale
+    val_2_good_fasta_path: str | None = None # "data/split_data_197/vae_plus_split/DTp_val_VAE_plus_25_30.fasta"
+    val_2_bad_fasta_path: str | None = None  # "data/split_data_197/vae_plus_split/DTm_val_VAE_plus_25_30.fasta"
+    val_2_dataset_description: str = "Dist 25-30 validation split"  # titolo del plot che descrive questo dataset
 
     # Output paths
-    checkpoint_dir: str = "checkpoints/checkpoints_roberto/split_0.15_vae25_30_in_test/top5_bin_b03/"
-    image_dir: str = "images_roberto/split_0.15_vae25_30_in_test/top5_bin_b03/"
-    history_json_path: str = "images_roberto/split_0.15_vae25_30_in_test/top5_bin_b03/history.json"
+    checkpoint_dir: str = "checkpoints/checkpoints_roberto/split_0.15_vae25_30_in_test/top20_bin_b03/"  # dove salvare i checkpoint del modello durante il training
+    image_dir: str = "images_roberto/split_0.15_vae25_30_in_test/top20_bin_b03/"                        # dove salvare le immagini generate durante il training
+    history_json_path: str = "images_roberto/split_0.15_vae25_30_in_test/top20_bin_b03/history.json"    # dove salvare il json con la storia di training (loss e metriche ad ogni epoch)
 
     # Training hyperparameters
     block_size: int = 198
     batch_size: int = 1024
     learning_rate: float = 1e-4
     num_epochs: int = 500
+    # Beta coefficient for DPO loss: higher values put more emphasis on correctly classifying the worse sequence in each pair.
     beta: float = 0.3
 
     # Loss selection: if True use Reint loss instead of DPO loss.
@@ -60,24 +64,40 @@ class Config:
     n_head: int = 8
     n_layer: int = 4
 
-    # Optimization/acceleration
-    layers_to_freeze: int = 0
-    use_torch_compile: bool = True
+    # freeze layers
+    layers_to_freeze: int = 0   # how many of the lower (closer to input) transformer layers to freeze during training; 0 means no freezing
+    
+
+
+
+
+
+
+
+
+    ######### NON ESSENTIAL CONFIGS BELOW (mostly for metrics and evaluation settings) - can keep defaults for most experiments, but good to have them here if we want to edit without digging through the code
+
+    # Optimization/acceleration (lascia su True)
+    use_torch_compile: bool = True  
     suppress_dynamo_errors: bool = True
 
     # Metrics switches
+    # se True calcola la loss da plottare su tutto i training set e non solo su una batch random
     compute_full_nll_metrics: bool = False
+    # Random-batch NLL estimation settings
+    nll_rand_n_batches: int = 10
+    nll_rand_eval_batch_size_cap: int = 128
+
     # Pearson correlation between sequence NLL and labels (good=0, bad=1)
     compute_val_separation_metric: bool = True
 
     # DN likelihood monitoring
+    # If "full", compute NLL on the full DN eval set every eval epoch. If "fixed_subsample", compute NLL on a fixed random subsample of the DN eval set every eval epoch. The fixed subsample mode is much faster and should correlate well with the full NLL, as long as the subsample size is large enough.
     dn_likelihood_mode: str = "fixed_subsample"  # "full" or "fixed_subsample"
     dn_fixed_subsample_size: int = 800
     dn_fixed_subsample_seed: int = 1234
 
-    # Random-batch NLL estimation settings
-    nll_rand_n_batches: int = 10
-    nll_rand_eval_batch_size_cap: int = 128
+    
 
     # Full-metric batch sizes
     full_eval_batch_size_cap: int = 256
