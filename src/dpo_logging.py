@@ -44,10 +44,10 @@ def print_run_configuration(
     device: torch.device,
     train_pair_count: int,
     val_pair_count: int,
-    vae_good_count: int,
-    vae_bad_count: int,
-    dist2530_good_count: int,
-    dist2530_bad_count: int,
+    val_1_good_count: int,
+    val_1_bad_count: int,
+    val_2_good_count: int,
+    val_2_bad_count: int,
     dn_eval_count: int,
     train_good_fasta_path: Path,
     train_bad_fasta_path: Path,
@@ -62,8 +62,8 @@ def print_run_configuration(
     - cfg: Runtime config dataclass.
     - device: Active compute device.
     - train_pair_count, val_pair_count: Number of preference pairs.
-    - vae_good_count, vae_bad_count: VAE evaluation split sizes.
-    - dist2530_good_count, dist2530_bad_count: Dist25-30 split sizes.
+    - val_1_good_count, val_1_bad_count: VAE evaluation split sizes.
+    - val_2_good_count, val_2_bad_count: Dist25-30 split sizes.
     - dn_eval_count: Number of DN sequences used for likelihood monitoring.
     - *_path arguments: Resolved filesystem paths for train/validation sources.
 
@@ -81,6 +81,8 @@ def print_run_configuration(
     print(f"  Batch size                      : {cfg.batch_size}")
     print(f"  Learning rate                   : {cfg.learning_rate}")
     print(f"  Beta (DPO)                      : {cfg.beta}")
+    print(f"  Reint mode                      : {cfg.reint}")
+    print(f"  Lambda Reint                    : {cfg.lambda_reint}")
     print(f"  Block size                      : {cfg.block_size}")
     print("\nMetrics configuration:")
     print(f"  Compute full NLL metrics        : {cfg.compute_full_nll_metrics}")
@@ -97,8 +99,8 @@ def print_run_configuration(
     print("\nDataset sizes:")
     print(f"  Train pairs                     : {train_pair_count}")
     print(f"  Validation pairs                : {val_pair_count}")
-    print(f"  VAE split (good / bad)          : {vae_good_count} / {vae_bad_count}")
-    print(f"  Dist25-30 split (good / bad)    : {dist2530_good_count} / {dist2530_bad_count}")
+    print(f"  VAE split (good / bad)          : {val_1_good_count} / {val_1_bad_count}")
+    print(f"  Dist25-30 split (good / bad)    : {val_2_good_count} / {val_2_bad_count}")
 
 
 def print_eval_summary(
@@ -117,8 +119,8 @@ def print_eval_summary(
     mean_like_ref: float,
     compute_val_separation_metric: bool,
     val_sep_corr: float,
-    vae_sep_corr: float,
-    dist2530_sep_corr: float,
+    val_1_sep_corr: float,
+    val_2_sep_corr: float,
     compute_full_nll_metrics: bool,
     nll_train_good_full: float,
     nll_val_good_full: float,
@@ -133,7 +135,7 @@ def print_eval_summary(
     - nll_*: Random-batch and optional full-split NLL metrics.
     - mean_like_model/ref: DN mean token likelihood values.
     - compute_val_separation_metric: Toggle for separation output.
-    - val_sep_corr, vae_sep_corr, dist2530_sep_corr: Correlation scores.
+    - val_sep_corr, val_1_sep_corr, val_2_sep_corr: Correlation scores.
     - compute_full_nll_metrics: Toggle for full-split NLL output.
 
     Output:
@@ -177,7 +179,7 @@ def print_eval_summary(
         print("\nSeparation metric (Pearson r, NLL vs label 0/1):")
         print(
             "  Validation / VAE / Dist25-30   : "
-            f"{_fmt_float(val_sep_corr)} / {_fmt_float(vae_sep_corr)} / {_fmt_float(dist2530_sep_corr)}"
+            f"{_fmt_float(val_sep_corr)} / {_fmt_float(val_1_sep_corr)} / {_fmt_float(val_2_sep_corr)}"
         )
     else:
         print("\nSeparation metric:")

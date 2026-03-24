@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Compatibility launcher for the src-based training entrypoint."""
+"""Compatibility launcher for the src2-based training entrypoint."""
 
 from src.dpo_train import main
 from src.dpo_config import CONFIG

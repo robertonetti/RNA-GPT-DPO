@@ -6,88 +6,6 @@ from typing import Dict, List, Any, Sequence
 import matplotlib.pyplot as plt
 
 
-def _plot_current_epoch_histogram(
-    ax,
-    good_distribution: List[float],
-    bad_distribution: List[float],
-    pearson_value: float,
-    title: str,
-) -> None:
-    """Draw overlaid good/bad sequence-NLL histograms for one split.
-
-    Inputs:
-    - ax: Matplotlib axis where the histogram is drawn.
-    - good_distribution: List of ``N_good`` per-sequence NLL values.
-    - bad_distribution: List of ``N_bad`` per-sequence NLL values.
-    - pearson_value: Scalar Pearson correlation for annotation.
-    - title: Plot title.
-
-    Output:
-    - None. The function mutates ``ax`` in-place.
-    """
-    # Track whether each class has at least one point to draw.
-    has_good = len(good_distribution) > 0
-    has_bad = len(bad_distribution) > 0
-
-    if has_good:
-        ax.hist(
-            good_distribution,
-            bins=30,
-            alpha=0.45,
-            color="tab:blue",
-            edgecolor="black",
-            linewidth=0.5,
-            label="Good NLL",
-        )
-
-    if has_bad:
-        ax.hist(
-            bad_distribution,
-            bins=30,
-            alpha=0.45,
-            color="tab:orange",
-            edgecolor="black",
-            linewidth=0.5,
-            label="Bad NLL",
-        )
-
-    if has_good or has_bad:
-        # NaN-safe formatting of Pearson annotation.
-        if pearson_value == pearson_value:
-            pearson_text = f"Pearson = {pearson_value:.3f}"
-        else:
-            pearson_text = "Pearson = nan"
-        ax.text(
-            0.02,
-            0.98,
-            pearson_text,
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=12,
-            fontweight="bold",
-            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
-        )
-    else:
-        ax.text(
-            0.5,
-            0.5,
-            "No data available",
-            transform=ax.transAxes,
-            ha="center",
-            va="center",
-            fontsize=12,
-            fontweight="bold",
-        )
-
-    ax.set_title(title)
-    ax.set_xlabel("Per-sequence NLL (model)")
-    ax.set_ylabel("Count")
-    ax.grid(alpha=0.3)
-    if has_good or has_bad:
-        ax.legend(loc="best")
-
-
 def _with_dataset_description(
     base_title: str,
     dataset_key: str,
@@ -129,16 +47,14 @@ def _percentile(values: Sequence[float], q: float) -> float:
 def save_epoch_figures(
     history: Dict[str, List[Any]],
     main_path: Path,
-    violin_path: Path,
     dataset_descriptions: Dict[str, str] | None = None,
 ) -> None:
-    """Generate and save the two standard training figures for the current history.
+    """Generate and save the standard multi-panel training figure.
 
     Inputs:
     - history: Metric dictionary with per-epoch lists.
         Key size convention: each scalar list has length ``E`` (number of stored epochs).
     - main_path: Output file path for multi-panel epoch curves.
-    - violin_path: Output file path for current-epoch histogram panels.
 
     Output:
     - None. Writes PNG files to disk.
@@ -240,70 +156,6 @@ def save_epoch_figures(
     # Persist chart and free figure memory immediately.
     fig_main.savefig(main_path, dpi=140, bbox_inches="tight")
     plt.close(fig_main)
-
-    # Figure 2: per-sequence NLL distributions for the latest epoch only.
-    current_epoch = epochs[-1]
-
-    panel_specs = []
-    if len(history["val_good_seq_nll"][-1]) > 0 or len(history["val_bad_seq_nll"][-1]) > 0:
-        panel_specs.append(
-            (
-                history["val_good_seq_nll"][-1],
-                history["val_bad_seq_nll"][-1],
-                history["val_sep_corr"][-1],
-                _with_dataset_description(
-                    f"Validation NLL Histogram - Epoch {current_epoch}",
-                    "val",
-                    dataset_descriptions,
-                ),
-            )
-        )
-    if len(history["vae_good_seq_nll"][-1]) > 0 or len(history["vae_bad_seq_nll"][-1]) > 0:
-        panel_specs.append(
-            (
-                history["vae_good_seq_nll"][-1],
-                history["vae_bad_seq_nll"][-1],
-                history["vae_sep_corr"][-1],
-                _with_dataset_description(
-                    f"VAE Dist 25-30 NLL Histogram - Epoch {current_epoch}",
-                    "val_1",
-                    dataset_descriptions,
-                ),
-            )
-        )
-    if len(history["dist2530_good_seq_nll"][-1]) > 0 or len(history["dist2530_bad_seq_nll"][-1]) > 0:
-        panel_specs.append(
-            (
-                history["dist2530_good_seq_nll"][-1],
-                history["dist2530_bad_seq_nll"][-1],
-                history["dist2530_sep_corr"][-1],
-                _with_dataset_description(
-                    f"Validation Dist 25-30 NLL Histogram - Epoch {current_epoch}",
-                    "val_2",
-                    dataset_descriptions,
-                ),
-            )
-        )
-
-    if len(panel_specs) > 0:
-        fig_hist, axes_hist = plt.subplots(1, len(panel_specs), figsize=(8 * len(panel_specs), 6))
-        if len(panel_specs) == 1:
-            axes = [axes_hist]
-        else:
-            axes = list(axes_hist)
-
-        for ax, (good_dist, bad_dist, corr_value, panel_title) in zip(axes, panel_specs):
-            _plot_current_epoch_histogram(
-                ax,
-                good_dist,
-                bad_dist,
-                corr_value,
-                title=panel_title,
-            )
-
-        fig_hist.tight_layout()
-        fig_hist.savefig(violin_path, dpi=140, bbox_inches="tight")
-        plt.close(fig_hist)
 
 
 def _style_violin_parts(parts, color: str) -> None:
@@ -498,17 +350,17 @@ def save_periodic_violin_history_figure(
             _with_dataset_description("NLL distributions vs Epoch", "val", dataset_descriptions),
         ),
         (
-            "vae_good_seq_nll",
-            "vae_bad_seq_nll",
-            "vae_dist_nll_corr",
+            "val_1_good_seq_nll",
+            "val_1_bad_seq_nll",
+            "val_1_dist_nll_corr",
             _with_dataset_description("NLL distributions vs Epoch", "val_1", dataset_descriptions),
         ),
         (
-            "dist2530_good_seq_nll",
-            "dist2530_bad_seq_nll",
-            "dist2530_dist_nll_corr",
+            "val_2_good_seq_nll",
+            "val_2_bad_seq_nll",
+            "val_2_dist_nll_corr",
             _with_dataset_description(
-                "NLL distributions vs Epoch", "val_1", dataset_descriptions,
+                "NLL distributions vs Epoch", "val_2", dataset_descriptions,
             ),
         ),
     ]
@@ -554,5 +406,399 @@ def save_periodic_violin_history_figure(
         fontweight="bold",
     )
     fig.tight_layout(rect=[0, 0, 1, 0.985])
+    fig.savefig(output_path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _pearson_from_lists(x_values: Sequence[float], y_values: Sequence[float]) -> float:
+    """Compute Pearson correlation from two numeric sequences."""
+    if len(x_values) == 0 or len(y_values) == 0 or len(x_values) != len(y_values):
+        return float("nan")
+    if len(x_values) < 2:
+        return float("nan")
+
+    x_mean = sum(x_values) / len(x_values)
+    y_mean = sum(y_values) / len(y_values)
+
+    cov = 0.0
+    x_var = 0.0
+    y_var = 0.0
+    for x_val, y_val in zip(x_values, y_values):
+        dx = x_val - x_mean
+        dy = y_val - y_mean
+        cov += dx * dy
+        x_var += dx * dx
+        y_var += dy * dy
+
+    denom = (x_var * y_var) ** 0.5
+    if denom == 0.0:
+        return float("nan")
+    return cov / denom
+
+
+def _build_fixed_distance_bins() -> List[tuple[int, int]]:
+    """Return fixed integer bins: [0-5], [6-10], ..., [56-60]."""
+    bins: List[tuple[int, int]] = [(0, 5)]
+    for start in range(6, 61, 5):
+        bins.append((start, min(start + 4, 60)))
+    return bins
+
+
+def _compute_binned_correlations(
+    distances: Sequence[float],
+    nll_values: Sequence[float],
+) -> tuple[List[str], List[float], List[bool], List[int], List[float]]:
+    """Return (labels, correlations, is_empty, counts, mean_nll) over fixed bins."""
+    fixed_bins = _build_fixed_distance_bins()
+
+    labels: List[str] = []
+    correlations: List[float] = []
+    empty_flags: List[bool] = []
+    counts: List[int] = []
+    mean_nll_values: List[float] = []
+
+    for left_i, right_i in fixed_bins:
+        left = float(left_i)
+        right = float(right_i)
+
+        x_bin: List[float] = []
+        y_bin: List[float] = []
+        for dist, nll in zip(distances, nll_values):
+            in_bin = left <= dist <= right
+            if in_bin:
+                x_bin.append(dist)
+                y_bin.append(nll)
+
+        label = f"{left_i}-{right_i}"
+        labels.append(label)
+
+        if len(x_bin) == 0:
+            correlations.append(float("nan"))
+            empty_flags.append(True)
+            counts.append(0)
+            mean_nll_values.append(float("nan"))
+        else:
+            correlations.append(_pearson_from_lists(x_bin, y_bin))
+            empty_flags.append(False)
+            counts.append(len(x_bin))
+            mean_nll_values.append(sum(y_bin) / len(y_bin))
+
+    return labels, correlations, empty_flags, counts, mean_nll_values
+
+
+def save_distance_binned_correlation_figure(
+    output_path: Path,
+    epoch: int,
+    dataset_entries: Sequence[Dict[str, Any]],
+) -> None:
+    """Save distance-bin vs Pearson(distance, NLL) bars for each available dataset.
+
+    Each dataset entry must define:
+    - title: Panel title.
+    - distances: Sequence with good+bad distances from the reference sequence.
+    - good_nll: Per-sequence NLL for good set.
+    - bad_nll: Per-sequence NLL for bad set.
+
+    Empty bins are marked with a red "x" at y=0.5 as requested.
+    """
+    valid_entries: List[Dict[str, Any]] = []
+    for entry in dataset_entries:
+        distances = [float(v) for v in entry.get("distances", [])]
+        good_nll = [float(v) for v in entry.get("good_nll", [])]
+        bad_nll = [float(v) for v in entry.get("bad_nll", [])]
+        nll_values = good_nll + bad_nll
+
+        usable_len = min(len(distances), len(nll_values))
+        valid_entries.append(
+            {
+                "title": str(entry.get("title", "Dataset")),
+                "distances": distances[:usable_len],
+                "nll_values": nll_values[:usable_len],
+            }
+        )
+
+    if len(valid_entries) == 0:
+        return
+
+    fig, axes = plt.subplots(len(valid_entries), 1, figsize=(22, 4.6 * len(valid_entries)))
+    if len(valid_entries) == 1:
+        axes_list = [axes]
+    else:
+        axes_list = list(axes)
+
+    for ax, entry in zip(axes_list, valid_entries):
+        distances = entry["distances"]
+        nll_values = entry["nll_values"]
+        title = entry["title"]
+
+        if len(distances) == 0 or len(nll_values) == 0:
+            ax.text(
+                0.5,
+                0.5,
+                "No data available",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=12,
+                fontweight="bold",
+            )
+            ax.set_ylim(-1.05, 1.05)
+            ax.set_title(title)
+            ax.set_ylabel("Pearson r")
+            ax.grid(alpha=0.3)
+            continue
+
+        labels, correlations, empty_flags, counts, mean_nll_values = _compute_binned_correlations(
+            distances,
+            nll_values,
+        )
+
+        x_positions = list(range(len(labels)))
+        bar_heights: List[float] = []
+        bar_colors: List[str] = []
+        bar_hatches: List[str] = []
+        for corr, is_empty in zip(correlations, empty_flags):
+            if is_empty:
+                bar_heights.append(0.0)
+                bar_colors.append("white")
+                bar_hatches.append("")
+            elif corr == corr:
+                bar_heights.append(corr)
+                bar_colors.append("tab:blue")
+                bar_hatches.append("")
+            else:
+                # Non-empty bin with undefined correlation (e.g. zero distance variance).
+                bar_heights.append(0.0)
+                bar_colors.append("lightgray")
+                bar_hatches.append("//")
+
+        bars = ax.bar(
+            x_positions,
+            bar_heights,
+            color=bar_colors,
+            edgecolor="black",
+            linewidth=0.8,
+        )
+        for bar, hatch in zip(bars, bar_hatches):
+            if hatch:
+                bar.set_hatch(hatch)
+
+        empty_x = [x for x, is_empty in zip(x_positions, empty_flags) if is_empty]
+        if len(empty_x) > 0:
+            ax.scatter(
+                empty_x,
+                [0.5 for _ in empty_x],
+                marker="x",
+                color="red",
+                s=80,
+                linewidths=2.0,
+                zorder=5,
+                label="Empty bin",
+            )
+
+        # Add sample count text above each non-empty bar.
+        for x_pos, is_empty, n_count, corr in zip(x_positions, empty_flags, counts, correlations):
+            if is_empty:
+                continue
+            if corr == corr and corr > 0.0:
+                y_text = min(corr + 0.05, 1.0)
+            else:
+                y_text = 0.05
+            ax.text(
+                x_pos,
+                y_text,
+                f"n={n_count}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                color="black",
+            )
+
+        # Plot mean NLL per interval on a secondary (right) y-axis.
+        ax_right = ax.twinx()
+        line_x: List[float] = []
+        line_y: List[float] = []
+        for x_pos, is_empty, mean_nll in zip(x_positions, empty_flags, mean_nll_values):
+            if is_empty:
+                continue
+            line_x.append(float(x_pos))
+            line_y.append(float(mean_nll))
+
+        if len(line_x) > 0:
+            ax_right.plot(
+                line_x,
+                line_y,
+                color="green",
+                marker="o",
+                linewidth=1.6,
+                markersize=4,
+                label="Mean NLL",
+            )
+            ax_right.legend(loc="upper left")
+        ax_right.set_ylabel("Mean NLL", color="green")
+        ax_right.tick_params(axis="y", colors="green")
+
+        ax.axhline(0.0, color="black", linewidth=1.0, alpha=0.8)
+        ax.set_ylim(-1.05, 1.05)
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(labels, rotation=35, ha="right")
+        ax.set_xlabel("Distance bin from reference (DN first sequence)")
+        ax.set_ylabel("Pearson r(distance, NLL)")
+        ax.set_title(title)
+        ax.grid(axis="y", alpha=0.3)
+        if len(empty_x) > 0:
+            ax.legend(loc="upper right")
+
+    fig.suptitle(
+        f"Distance-binned correlation vs NLL (epoch {epoch})",
+        fontsize=16,
+        fontweight="bold",
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(output_path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_distance_nll_scatter_panel(
+    ax,
+    title: str,
+    good_distances: Sequence[float],
+    bad_distances: Sequence[float],
+    good_nll: Sequence[float],
+    bad_nll: Sequence[float],
+    ylim_min: float,
+    ylim_max: float,
+) -> None:
+    """Plot one panel with distance-binned NLL violins by class."""
+    good_x = [float(v) for v in good_distances]
+    bad_x = [float(v) for v in bad_distances]
+    good_y = [float(v) for v in good_nll]
+    bad_y = [float(v) for v in bad_nll]
+
+    # Keep arrays aligned if lengths differ for safety.
+    good_len = min(len(good_x), len(good_y))
+    bad_len = min(len(bad_x), len(bad_y))
+    good_x = good_x[:good_len]
+    good_y = good_y[:good_len]
+    bad_x = bad_x[:bad_len]
+    bad_y = bad_y[:bad_len]
+
+    has_points = (len(good_y) > 0) or (len(bad_y) > 0)
+
+    bins = _build_fixed_distance_bins()
+    labels = [f"{left}-{right}" for left, right in bins]
+    positions = [float(i) for i in range(len(bins))]
+
+    good_by_bin: List[List[float]] = [[] for _ in bins]
+    bad_by_bin: List[List[float]] = [[] for _ in bins]
+
+    for dist, nll in zip(good_x, good_y):
+        for bin_idx, (left, right) in enumerate(bins):
+            if float(left) <= dist <= float(right):
+                good_by_bin[bin_idx].append(nll)
+                break
+
+    for dist, nll in zip(bad_x, bad_y):
+        for bin_idx, (left, right) in enumerate(bins):
+            if float(left) <= dist <= float(right):
+                bad_by_bin[bin_idx].append(nll)
+                break
+
+    good_nonempty_idx = [i for i, values in enumerate(good_by_bin) if len(values) > 0]
+    bad_nonempty_idx = [i for i, values in enumerate(bad_by_bin) if len(values) > 0]
+
+    if len(bad_nonempty_idx) > 0:
+        bad_parts = ax.violinplot(
+            dataset=[bad_by_bin[i] for i in bad_nonempty_idx],
+            positions=[positions[i] for i in bad_nonempty_idx],
+            widths=0.8,
+            showmeans=False,
+            showmedians=True,
+            showextrema=True,
+        )
+        _style_violin_parts(bad_parts, color="tab:red")
+
+    if len(good_nonempty_idx) > 0:
+        good_parts = ax.violinplot(
+            dataset=[good_by_bin[i] for i in good_nonempty_idx],
+            positions=[positions[i] for i in good_nonempty_idx],
+            widths=0.8,
+            showmeans=False,
+            showmedians=True,
+            showextrema=True,
+        )
+        _style_violin_parts(good_parts, color="tab:green")
+
+    ax.set_title(title)
+    ax.set_xlabel("Distance bin from reference")
+    ax.set_ylabel("NLL")
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels, rotation=35, ha="right")
+    ax.set_ylim(ylim_min, ylim_max)
+    ax.grid(axis="y", alpha=0.25)
+
+    if has_points:
+        ax.plot([], [], color="tab:red", linewidth=8, alpha=0.45, label="DT-")
+        ax.plot([], [], color="tab:green", linewidth=8, alpha=0.45, label="DT+")
+        ax.legend(loc="best")
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No data available",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=12,
+            fontweight="bold",
+        )
+
+
+def save_distance_nll_scatter_figure(
+    output_path: Path,
+    epoch: int,
+    train_title: str,
+    train_good_distances: Sequence[float],
+    train_bad_distances: Sequence[float],
+    train_good_nll: Sequence[float],
+    train_bad_nll: Sequence[float],
+    val_title: str,
+    val_good_distances: Sequence[float],
+    val_bad_distances: Sequence[float],
+    val_good_nll: Sequence[float],
+    val_bad_nll: Sequence[float],
+    ylim_min: float = 0.45,
+    ylim_max: float = 3.0,
+) -> None:
+    """Save a 2-panel figure (train/val) with distance-binned NLL violins."""
+    fig, axes = plt.subplots(1, 2, figsize=(20, 6), sharey=False)
+
+    _plot_distance_nll_scatter_panel(
+        ax=axes[0],
+        title=train_title,
+        good_distances=train_good_distances,
+        bad_distances=train_bad_distances,
+        good_nll=train_good_nll,
+        bad_nll=train_bad_nll,
+        ylim_min=ylim_min,
+        ylim_max=ylim_max,
+    )
+    _plot_distance_nll_scatter_panel(
+        ax=axes[1],
+        title=val_title,
+        good_distances=val_good_distances,
+        bad_distances=val_bad_distances,
+        good_nll=val_good_nll,
+        bad_nll=val_bad_nll,
+        ylim_min=ylim_min,
+        ylim_max=ylim_max,
+    )
+
+    fig.suptitle(
+        f"Distance-binned NLL violins (epoch {epoch})",
+        fontsize=16,
+        fontweight="bold",
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(output_path, dpi=140, bbox_inches="tight")
     plt.close(fig)
