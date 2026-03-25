@@ -19,22 +19,22 @@ class Config:
     pretrained_ckpt_path: str = "checkpoints/checkpoints_giovanni/RF00028_aligned_GPTTransformer_th10_lr5e-4_batch16_embd64_nhead8_nlayer4_longer_best.pt"
 
     # DPO train/val pair datasets
-    train_good_fasta_path: str = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTp_train_excluding-vae-25-30.fasta"   # split train in funzionali
-    train_bad_fasta_path: str = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTm_train_excluding-vae-25-30.fasta"    # split train in non funzionali
-    train_csv_mapping_path: str = "data/pairings/pair_split_fraction-0.15_ add-vae-25-30-to-validation/pair_train/top5_bin.csv"                            # pairing csv file
-    train_dataset_description: str = "Train Dataset (without VAE sequences in 25-30 distance range)"                              # titolo del plot che descrive questo dataset
+    train_good_fasta_path: str = "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/DTp_train.fasta"   # split train in funzionali
+    train_bad_fasta_path: str = "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/DTm_train_after-nll-filter.fasta"    # split train in non funzionali
+    train_csv_mapping_path: str = "data/pairings/pair_split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/pair_train/allpairs_bin_refbin_reciprocal.csv"                            # pairing csv file
+    train_dataset_description: str = "Train Dataset (without VAE sequences in 25-30 distance range) filtered by NLL (70 percentile)"                              # titolo del plot che descrive questo dataset
 
-    val_good_fasta_path: str = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTp_val_plus-vae-25-30.fasta"  # split test in funzionali
-    val_bad_fasta_path: str  = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTm_val_plus-vae-25-30.fasta"  # split test in non funzionali
-    val_csv_mapping_path: str = "data/pairings/pair_split_fraction-0.15_ add-vae-25-30-to-validation/pair_validation/top5_bin.csv"                               # pairing csv file                           
-    val_dataset_description: str = "Validation Dataset (with VAE sequences in 25-30 distance range)"                              # titolo del plot che descrive questo dataset
+    val_good_fasta_path: str = "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/DTp_val_plus-vae25-30-and-close.fasta"  # split test in funzionali
+    val_bad_fasta_path: str  = "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/DTm_val_plus-vae25-30-and-close.fasta"  # split test in non funzionali
+    val_csv_mapping_path: str = "data/pairings/pair_split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/pair_validation/allpairs_bin_refbin_reciprocal.csv"                               # pairing csv file                           
+    val_dataset_description: str = "Validation Dataset (with VAE sequences in 25-30 distance range) filtered by NLL (70 percentile"                              # titolo del plot che descrive questo dataset
 
     # OPTIONAL Extra datasets used for violin-based separation analysis
 
     # primo validation set opzionale
-    val_1_good_fasta_path: str | None = "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTp_excluded-vae-at-dist-25-30.fasta"  # funzionali primo validation ulteriore (OPZIONALE)
-    val_1_bad_fasta_path: str | None =  "data/split_train_validation/split_fraction-0.15_ add-vae-25-30-to-validation/DTm_excluded-vae-at-dist-25-30.fasta"  # non funzionali primo validation ulteriore (OPZIONALE)
-    val_1_dataset_description: str = "VAE sequences in 25-30 distance range"                                                          # titolo del plot che descrive questo dataset
+    val_1_good_fasta_path: str | None = "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/DTp_vae25-30_plus-close-close.fasta"  # funzionali primo validation ulteriore (OPZIONALE)
+    val_1_bad_fasta_path: str | None =  "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_100/DTm_vae25-30_plus-close-close.fasta"  # non funzionali primo validation ulteriore (OPZIONALE)
+    val_1_dataset_description: str = "VAE sequences in 25-30 distance range and close to them"                                                          # titolo del plot che descrive questo dataset
 
     # secondo validation set opzionale
     val_2_good_fasta_path: str | None = None # "data/split_data_197/vae_plus_split/DTp_val_VAE_plus_25_30.fasta"
@@ -42,9 +42,9 @@ class Config:
     val_2_dataset_description: str = "Dist 25-30 validation split"  # titolo del plot che descrive questo dataset
 
     # Output paths
-    checkpoint_dir: str = "checkpoints/checkpoints_roberto/split_0.15_vae25_30_in_test/top20_bin_b03/"  # dove salvare i checkpoint del modello durante il training
-    image_dir: str = "images_roberto/split_0.15_vae25_30_in_test/top20_bin_b03/"                        # dove salvare le immagini generate durante il training
-    history_json_path: str = "images_roberto/split_0.15_vae25_30_in_test/top20_bin_b03/history.json"    # dove salvare il json con la storia di training (loss e metriche ad ogni epoch)
+    checkpoint_dir: str = "checkpoints/checkpoints_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-100/allpairs_bin_refbin_reciprocal/"  # dove salvare i checkpoint del modello durante il training
+    image_dir: str = "images_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-100/allpairs_bin_refbin_reciprocal/"                        # dove salvare le immagini generate durante il training
+    history_json_path: str = "images_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-100/allpairs_bin_refbin_reciprocal/history.json"    # dove salvare il json con la storia di training (loss e metriche ad ogni epoch)
 
     # Training hyperparameters
     block_size: int = 198
