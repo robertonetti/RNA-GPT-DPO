@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import fill
 from typing import Dict, List, Any, Sequence
 
 import matplotlib.pyplot as plt
@@ -18,6 +19,16 @@ def _with_dataset_description(
     if desc == "":
         return base_title
     return f"{base_title}\n{desc}"
+
+
+def _format_main_panel_title(base_title: str, train_desc: str, val_desc: str) -> str:
+    """Build compact multi-line titles for main.png panels."""
+    if not train_desc and not val_desc:
+        return base_title
+
+    train_line = fill(f"Train: {train_desc or '-'}", width=85)
+    val_line = fill(f"Val: {val_desc or '-'}", width=85)
+    return f"{base_title}\n{train_line}\n{val_line}"
 
 
 def _percentile(values: Sequence[float], q: float) -> float:
@@ -75,11 +86,9 @@ def save_epoch_figures(
     else:
         nll_val_good_line = None
         nll_val_bad_line = None
-    nll_title = "NLL Metrics (Random Batches)"
     train_desc = "" if dataset_descriptions is None else dataset_descriptions.get("train", "").strip()
     val_desc = "" if dataset_descriptions is None else dataset_descriptions.get("val", "").strip()
-    if train_desc or val_desc:
-        nll_title += f"\nTrain: {train_desc or '-'} | Val: {val_desc or '-'}"
+    nll_title = _format_main_panel_title("NLL Metrics (Random Batches)", train_desc, val_desc)
     ax_nll.set_title(nll_title)
     ax_nll.set_xlabel("Epoch")
     ax_nll.set_ylabel("NLL")
@@ -117,9 +126,7 @@ def save_epoch_figures(
         )[0]
     else:
         margin_val_line = None
-    margin_title = "NLL Margin (Bad - Good)"
-    if train_desc or val_desc:
-        margin_title += f"\nTrain: {train_desc or '-'} | Val: {val_desc or '-'}"
+    margin_title = _format_main_panel_title("NLL Margin (Bad - Good)", train_desc, val_desc)
     ax_margin.set_title(margin_title)
     ax_margin.set_xlabel("Epoch")
     ax_margin.set_ylabel("Margin")
@@ -143,9 +150,7 @@ def save_epoch_figures(
     ax_dpo.plot(epochs, history["dpo_train_full"], marker="o", label="DPO Full Train")
     if any(v == v for v in history["dpo_val_full"]):
         ax_dpo.plot(epochs, history["dpo_val_full"], marker="o", label="DPO Full Val")
-    dpo_title = "DPO Loss"
-    if train_desc or val_desc:
-        dpo_title += f"\nTrain: {train_desc or '-'} | Val: {val_desc or '-'}"
+    dpo_title = _format_main_panel_title("DPO Loss", train_desc, val_desc)
     ax_dpo.set_title(dpo_title)
     ax_dpo.set_xlabel("Epoch")
     ax_dpo.set_ylabel("Loss")
@@ -437,10 +442,10 @@ def _pearson_from_lists(x_values: Sequence[float], y_values: Sequence[float]) ->
 
 
 def _build_fixed_distance_bins() -> List[tuple[int, int]]:
-    """Return fixed integer bins: [0-5], [6-10], ..., [56-60]."""
-    bins: List[tuple[int, int]] = [(0, 5)]
-    for start in range(6, 61, 5):
-        bins.append((start, min(start + 4, 60)))
+    """Return fixed integer bins: [1-4], [5-8], ..., [57-60]."""
+    bins: List[tuple[int, int]] = []
+    for start in range(1, 61, 4):
+        bins.append((start, min(start + 3, 60)))
     return bins
 
 
