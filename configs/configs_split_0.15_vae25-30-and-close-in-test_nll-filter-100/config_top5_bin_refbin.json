@@ -29,7 +29,7 @@
   "block_size": 198,
   "batch_size": 1024,
   "learning_rate": 1e-5,
-  "num_epochs": 500,
+  "max_iterations": 100000000,
   "beta": 0.3,
 
   "reint": false,
@@ -53,7 +53,7 @@
   "dn_fixed_subsample_seed": 1234,
   "full_eval_batch_size_cap": 256,
 
-  "eval_every_n_epochs": 10,
+  "eval_every_n_iterations": 1000,
   "distance_nll_ylim_min": 0.45,
   "distance_nll_ylim_max": 3.0,
   "scheduler_step_size": 10000,
