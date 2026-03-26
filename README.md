@@ -95,6 +95,20 @@ Nomi file principali:
 
 ## Configurazione training (`src/dpo_config.py`)
 
+Da ora puoi passare una configurazione esterna JSON senza modificare a mano `src/dpo_config.py`.
+
+Comando:
+
+`python DPO_train.py -config path_to_config.json`
+
+Nel repository trovi un esempio completo in `config.json` con tutti i parametri disponibili.
+
+Dettagli utili:
+
+- se non passi `-config`, il training usa i default della dataclass `Config`.
+- il JSON fa override solo delle chiavi presenti nel file.
+- se nel JSON c'e una chiave non valida, il launcher alza errore esplicito.
+
 Tutti gli input del training DPO sono centralizzati nella dataclass `Config` in `src/dpo_config.py`.
 
 Nel codice (`src/dpo_train.py`) i path vengono risolti rispetto alla root del progetto con `resolve_path(...)`.
