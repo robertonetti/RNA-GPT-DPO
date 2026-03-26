@@ -27,7 +27,7 @@
   "history_json_path": "images_dpo/TEST/history.json",
 
   "block_size": 198,
-  "batch_size": 4096,
+  "batch_size": 1024,
   "learning_rate": 1e-5,
   "max_iterations": 100000000,
   "beta": 0.3,
@@ -48,12 +48,13 @@
   "nll_rand_eval_batch_size_cap": 128,
 
   "compute_val_separation_metric": true,
+  "compute_val_roc_prc_ppv": true,
   "dn_likelihood_mode": "fixed_subsample",
   "dn_fixed_subsample_size": 800,
   "dn_fixed_subsample_seed": 1234,
   "full_eval_batch_size_cap": 256,
 
-  "eval_every_n_iterations": 1000,
+  "eval_every_n_iterations": 50,
   "distance_nll_ylim_min": 0.4,
   "distance_nll_ylim_max": 3.0,
   "scheduler_step_size": 10000,

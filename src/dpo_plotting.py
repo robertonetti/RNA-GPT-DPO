@@ -7,6 +7,267 @@ from typing import Dict, List, Any, Sequence
 import matplotlib.pyplot as plt
 
 
+def _safe_trapezoid(x_values: Sequence[float], y_values: Sequence[float]) -> float:
+    """Compute trapezoidal area for paired points sorted by x."""
+    if len(x_values) < 2 or len(x_values) != len(y_values):
+        return float("nan")
+    area = 0.0
+    for i in range(1, len(x_values)):
+        dx = float(x_values[i]) - float(x_values[i - 1])
+        area += dx * (float(y_values[i]) + float(y_values[i - 1])) * 0.5
+    return float(area)
+
+
+def _build_binary_labels_and_scores(
+    good_nll: Sequence[float],
+    bad_nll: Sequence[float],
+) -> tuple[List[int], List[float]]:
+    """Return labels and scores where high score means likely-good sequence."""
+    labels: List[int] = []
+    scores: List[float] = []
+
+    for value in good_nll:
+        val = float(value)
+        if val == val:
+            labels.append(1)
+            scores.append(-val)
+    for value in bad_nll:
+        val = float(value)
+        if val == val:
+            labels.append(0)
+            scores.append(-val)
+
+    return labels, scores
+
+
+def _compute_roc_curve(labels: Sequence[int], scores: Sequence[float]) -> tuple[List[float], List[float], float]:
+    """Compute ROC points (FPR/TPR) and AUROC without external dependencies."""
+    if len(labels) == 0 or len(labels) != len(scores):
+        return [0.0, 1.0], [0.0, 1.0], float("nan")
+
+    positives = sum(1 for y in labels if y == 1)
+    negatives = sum(1 for y in labels if y == 0)
+    if positives == 0 or negatives == 0:
+        return [0.0, 1.0], [0.0, 1.0], float("nan")
+
+    ranked = sorted(zip(scores, labels), key=lambda item: item[0], reverse=True)
+    tp = 0
+    fp = 0
+    fpr: List[float] = [0.0]
+    tpr: List[float] = [0.0]
+
+    i = 0
+    while i < len(ranked):
+        score_i = ranked[i][0]
+        while i < len(ranked) and ranked[i][0] == score_i:
+            if ranked[i][1] == 1:
+                tp += 1
+            else:
+                fp += 1
+            i += 1
+        fpr.append(fp / negatives)
+        tpr.append(tp / positives)
+
+    auroc = _safe_trapezoid(fpr, tpr)
+    return fpr, tpr, auroc
+
+
+def _compute_pr_curve(labels: Sequence[int], scores: Sequence[float]) -> tuple[List[float], List[float], float]:
+    """Compute PR points (Recall/Precision) and AUPRC without external dependencies."""
+    if len(labels) == 0 or len(labels) != len(scores):
+        return [0.0, 1.0], [1.0, 0.0], float("nan")
+
+    positives = sum(1 for y in labels if y == 1)
+    if positives == 0:
+        return [0.0, 1.0], [1.0, 0.0], float("nan")
+
+    ranked = sorted(zip(scores, labels), key=lambda item: item[0], reverse=True)
+    tp = 0
+    fp = 0
+    recall: List[float] = [0.0]
+    precision: List[float] = [1.0]
+
+    i = 0
+    while i < len(ranked):
+        score_i = ranked[i][0]
+        while i < len(ranked) and ranked[i][0] == score_i:
+            if ranked[i][1] == 1:
+                tp += 1
+            else:
+                fp += 1
+            i += 1
+        denom = tp + fp
+        recall.append(tp / positives)
+        precision.append((tp / denom) if denom > 0 else 1.0)
+
+    if recall[-1] < 1.0:
+        recall.append(1.0)
+        precision.append(precision[-1])
+
+    auprc = _safe_trapezoid(recall, precision)
+    return recall, precision, auprc
+
+
+def _compute_ppv_curve(labels: Sequence[int], scores: Sequence[float]) -> tuple[List[float], List[float]]:
+    """Compute PPV among top-k samples ranked by predicted goodness score."""
+    if len(labels) == 0 or len(labels) != len(scores):
+        return [], []
+
+    ranked_labels = [label for _, label in sorted(zip(scores, labels), key=lambda item: item[0], reverse=True)]
+    total = len(ranked_labels)
+    cum_tp = 0
+    x_fraction: List[float] = []
+    y_ppv: List[float] = []
+
+    for idx, label in enumerate(ranked_labels, start=1):
+        if label == 1:
+            cum_tp += 1
+        x_fraction.append(idx / total)
+        y_ppv.append(cum_tp / idx)
+
+    return x_fraction, y_ppv
+
+
+def _format_curve_panel_title(dataset_title: str, metric_title: str) -> str:
+    """Build compact multiline titles for ROC/PRC/PPV panels."""
+    return f"{fill(dataset_title, width=62)}\n{metric_title}"
+
+
+def save_validation_roc_prc_ppv_figure(
+    output_path: Path,
+    eval_iterations: Sequence[int],
+    dataset_entries: Sequence[Dict[str, Any]],
+) -> None:
+    """Save a multi-row (datasets) x 3-column (ROC, PRC, PPV) cumulative figure."""
+    if len(eval_iterations) == 0:
+        return
+
+    valid_entries = [entry for entry in dataset_entries if str(entry.get("title", "")).strip() != ""]
+    if len(valid_entries) == 0:
+        return
+
+    n_rows = len(valid_entries)
+    fig, axes = plt.subplots(n_rows, 3, figsize=(21, 5.2 * n_rows), squeeze=False)
+    cmap = plt.get_cmap("viridis")
+
+    for row_idx, entry in enumerate(valid_entries):
+        title = str(entry.get("title", f"val_{row_idx}"))
+        good_nll_history = entry.get("good_nll_history", [])
+        bad_nll_history = entry.get("bad_nll_history", [])
+
+        ax_roc = axes[row_idx][0]
+        ax_prc = axes[row_idx][1]
+        ax_ppv = axes[row_idx][2]
+
+        valid_step_indices: List[int] = []
+        for step_idx in range(len(eval_iterations)):
+            good_nll = good_nll_history[step_idx] if step_idx < len(good_nll_history) else []
+            bad_nll = bad_nll_history[step_idx] if step_idx < len(bad_nll_history) else []
+            labels, scores = _build_binary_labels_and_scores(good_nll, bad_nll)
+            if len(labels) == 0 or sum(labels) == 0 or sum(1 for y in labels if y == 0) == 0:
+                continue
+            valid_step_indices.append(step_idx)
+
+        if len(valid_step_indices) == 0:
+            for ax in (ax_roc, ax_prc, ax_ppv):
+                ax.text(
+                    0.5,
+                    0.5,
+                    "Insufficient data",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                    fontsize=12,
+                    fontweight="bold",
+                )
+                ax.grid(alpha=0.25)
+            ax_roc.set_title(_format_curve_panel_title(title, "ROC"))
+            ax_prc.set_title(_format_curve_panel_title(title, "PRC"))
+            ax_ppv.set_title(_format_curve_panel_title(title, "PPV"))
+            continue
+
+        ax_roc.plot([0.0, 1.0], [0.0, 1.0], color="gray", linestyle="--", linewidth=1.0)
+
+        latest_auroc = float("nan")
+        latest_auprc = float("nan")
+        for order, step_idx in enumerate(valid_step_indices):
+            frac = order / max(len(valid_step_indices) - 1, 1)
+            color = cmap(0.15 + 0.8 * frac)
+            alpha = 0.22 + 0.72 * frac
+            line_w = 1.0 + 1.1 * frac
+
+            good_nll = good_nll_history[step_idx] if step_idx < len(good_nll_history) else []
+            bad_nll = bad_nll_history[step_idx] if step_idx < len(bad_nll_history) else []
+            labels, scores = _build_binary_labels_and_scores(good_nll, bad_nll)
+
+            fpr, tpr, auroc = _compute_roc_curve(labels, scores)
+            recall, precision, auprc = _compute_pr_curve(labels, scores)
+            ppv_x, ppv_y = _compute_ppv_curve(labels, scores)
+
+            latest_auroc = auroc
+            latest_auprc = auprc
+            baseline = sum(labels) / max(len(labels), 1)
+
+            ax_roc.plot(fpr, tpr, color=color, alpha=alpha, linewidth=line_w)
+            ax_prc.plot(recall, precision, color=color, alpha=alpha, linewidth=line_w)
+            ax_prc.axhline(baseline, color="gray", linestyle="--", linewidth=0.7, alpha=0.2)
+            ax_ppv.plot(ppv_x, ppv_y, color=color, alpha=alpha, linewidth=line_w)
+
+        first_it = int(eval_iterations[valid_step_indices[0]])
+        last_it = int(eval_iterations[valid_step_indices[-1]])
+        ax_roc.plot([], [], color=cmap(0.15), linewidth=2.0, label=f"early it={first_it}")
+        ax_roc.plot([], [], color=cmap(0.95), linewidth=2.0, label=f"late it={last_it}")
+        ax_roc.legend(loc="lower right", fontsize=8)
+
+        ax_roc.set_xlim(0.0, 1.0)
+        ax_roc.set_ylim(0.0, 1.0)
+        ax_roc.set_xlabel("False Positive Rate")
+        ax_roc.set_ylabel("True Positive Rate")
+        ax_roc.set_title(_format_curve_panel_title(title, "ROC"))
+        ax_roc.grid(alpha=0.25)
+        ax_roc.text(
+            0.04,
+            0.06,
+            f"AUROC={latest_auroc:.3f}" if latest_auroc == latest_auroc else "AUROC=nan",
+            transform=ax_roc.transAxes,
+            fontsize=11,
+            fontweight="bold",
+            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
+        )
+
+        ax_prc.set_xlim(0.0, 1.0)
+        ax_prc.set_ylim(0.0, 1.0)
+        ax_prc.set_xlabel("Recall")
+        ax_prc.set_ylabel("Precision")
+        ax_prc.set_title(_format_curve_panel_title(title, "PRC"))
+        ax_prc.grid(alpha=0.25)
+        ax_prc.text(
+            0.04,
+            0.06,
+            f"AUPRC={latest_auprc:.3f}" if latest_auprc == latest_auprc else "AUPRC=nan",
+            transform=ax_prc.transAxes,
+            fontsize=11,
+            fontweight="bold",
+            bbox={"facecolor": "white", "alpha": 0.8, "edgecolor": "none"},
+        )
+
+        ax_ppv.set_xlim(0.0, 1.0)
+        ax_ppv.set_ylim(0.0, 1.0)
+        ax_ppv.set_xlabel("Top-k Fraction")
+        ax_ppv.set_ylabel("PPV (Precision@k)")
+        ax_ppv.set_title(_format_curve_panel_title(title, "PPV"))
+        ax_ppv.grid(alpha=0.25)
+
+    fig.suptitle(
+        f"Train/Validation NLL as Classifier | cumulative curves up to iteration {int(eval_iterations[-1])}",
+        fontsize=16,
+        fontweight="bold",
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(output_path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _with_dataset_description(
     base_title: str,
     dataset_key: str,

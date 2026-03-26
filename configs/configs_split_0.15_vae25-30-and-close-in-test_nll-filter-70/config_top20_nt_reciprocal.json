@@ -48,6 +48,7 @@
   "nll_rand_eval_batch_size_cap": 128,
 
   "compute_val_separation_metric": true,
+  "compute_val_roc_prc_ppv": true,
   "dn_likelihood_mode": "fixed_subsample",
   "dn_fixed_subsample_size": 800,
   "dn_fixed_subsample_seed": 1234,

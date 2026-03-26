@@ -22,6 +22,7 @@ from src.dpo_plotting import (
     save_distance_nll_scatter_figure,
     save_epoch_figures,
     save_periodic_violin_history_figure,
+    save_validation_roc_prc_ppv_figure,
 )
 
 
@@ -71,6 +72,7 @@ def _save_eval_artifacts(
     build_distance_binned_entries: Callable[..., List[Dict[str, Any]]],
     distance_nll_ylim_min: float,
     distance_nll_ylim_max: float,
+    compute_val_roc_prc_ppv: bool,
 ) -> None:
     """Save all figures generated at one evaluation step."""
     save_epoch_figures(
@@ -114,6 +116,51 @@ def _save_eval_artifacts(
         ylim_min=distance_nll_ylim_min,
         ylim_max=distance_nll_ylim_max,
     )
+
+    if not compute_val_roc_prc_ppv:
+        return
+
+    validation_curve_entries: List[Dict[str, Any]] = []
+
+    train_good_values = history["train_good_seq_nll"][-1] if len(history["train_good_seq_nll"]) > 0 else []
+    train_bad_values = history["train_bad_seq_nll"][-1] if len(history["train_bad_seq_nll"]) > 0 else []
+    if len(train_good_values) > 0 or len(train_bad_values) > 0:
+        train_desc = dataset_descriptions.get("train", "").strip()
+        train_title = f"train | {train_desc}" if train_desc else "train"
+        validation_curve_entries.append(
+            {
+                "title": train_title,
+                "good_nll_history": history["train_good_seq_nll"],
+                "bad_nll_history": history["train_bad_seq_nll"],
+            }
+        )
+
+    val_specs = [
+        ("val", "val_good_seq_nll", "val_bad_seq_nll"),
+        ("val_1", "val_1_good_seq_nll", "val_1_bad_seq_nll"),
+        ("val_2", "val_2_good_seq_nll", "val_2_bad_seq_nll"),
+    ]
+    for split_key, good_key, bad_key in val_specs:
+        good_values = history[good_key][-1] if len(history[good_key]) > 0 else []
+        bad_values = history[bad_key][-1] if len(history[bad_key]) > 0 else []
+        if len(good_values) == 0 and len(bad_values) == 0:
+            continue
+        split_desc = dataset_descriptions.get(split_key, "").strip()
+        split_title = f"{split_key} | {split_desc}" if split_desc else split_key
+        validation_curve_entries.append(
+            {
+                "title": split_title,
+                "good_nll_history": history[good_key],
+                "bad_nll_history": history[bad_key],
+            }
+        )
+
+    if len(validation_curve_entries) > 0:
+        save_validation_roc_prc_ppv_figure(
+            output_path=image_dir / f"iter_{iteration:06d}_val_roc_prc_ppv.png",
+            eval_iterations=history["iteration"],
+            dataset_entries=validation_curve_entries,
+        )
 
 
 def _print_eval_block(

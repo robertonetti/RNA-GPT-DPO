@@ -94,6 +94,9 @@ class Config:
     # Pearson correlation between sequence NLL and labels (good=0, bad=1)
     compute_val_separation_metric: bool = True
 
+    # If True, save validation ROC/PRC/PPV figure at each evaluation step.
+    compute_val_roc_prc_ppv: bool = True
+
     # DN likelihood monitoring
     # If "full", compute NLL on the full DN eval set every eval epoch. If "fixed_subsample", compute NLL on a fixed random subsample of the DN eval set every eval epoch. The fixed subsample mode is much faster and should correlate well with the full NLL, as long as the subsample size is large enough.
     dn_likelihood_mode: str = "fixed_subsample"  # "full" or "fixed_subsample"

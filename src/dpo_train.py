@@ -537,6 +537,7 @@ def main(cfg: Config) -> None:
         build_distance_binned_entries=_build_distance_binned_entries,
         distance_nll_ylim_min=cfg.distance_nll_ylim_min,
         distance_nll_ylim_max=cfg.distance_nll_ylim_max,
+        compute_val_roc_prc_ppv=cfg.compute_val_roc_prc_ppv,
     )
     _print_eval_block(
         title="BASELINE EVALUATION",
@@ -660,6 +661,7 @@ def main(cfg: Config) -> None:
                 build_distance_binned_entries=_build_distance_binned_entries,
                 distance_nll_ylim_min=cfg.distance_nll_ylim_min,
                 distance_nll_ylim_max=cfg.distance_nll_ylim_max,
+                compute_val_roc_prc_ppv=cfg.compute_val_roc_prc_ppv,
             )
             _print_eval_block(
                 title="ITERATION EVALUATION",
@@ -678,11 +680,11 @@ def main(cfg: Config) -> None:
             pending_train_batch_losses = []
             model.train()
 
-            # Epoch-level LR update only after a full dataloader pass.
-            if completed_epoch:
-                scheduler.step()
+        # Epoch-level LR update only after a full dataloader pass.
+        if completed_epoch:
+            scheduler.step()
 
-            progress_bar.close()
+    progress_bar.close()
 
     # #######################################################################
     # ## Final Run Metadata                                                 ##
