@@ -22,9 +22,9 @@
   "val_2_bad_fasta_path": null,
   "val_2_dataset_description": "Dist 25-30 validation split",
 
-  "checkpoint_dir": "checkpoints/checkpoints_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-70/top20_bin_reciprocal/",
-  "image_dir": "images_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-70/top20_bin_reciprocal/",
-  "history_json_path": "images_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-70/top20_bin_reciprocal/history.json",
+  "checkpoint_dir": "checkpoints/checkpoints_dpo/split_0.15_vae25-30-and-close-in-test_nll-filter-70/top20_bin_reciprocal/",
+  "image_dir": "images_dpo/split_0.15_vae25-30-and-close-in-test_nll-filter-70/top20_bin_reciprocal/",
+  "history_json_path": "images_dpo/split_0.15_vae25-30-and-close-in-test_nll-filter-70/top20_bin_reciprocal/history.json",
 
   "block_size": 198,
   "batch_size": 1024,
