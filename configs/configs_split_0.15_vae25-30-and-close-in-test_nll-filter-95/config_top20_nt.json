@@ -1,0 +1,61 @@
+{
+  "seed": 1234,
+  "max_context": 198,
+  "dn_path": "data/RF00028_aligned_no_inserts_reweighted_d10.fa",
+  "pretrained_ckpt_path": "checkpoints/checkpoints_giovanni/RF00028_aligned_GPTTransformer_th10_lr5e-4_batch16_embd64_nhead8_nlayer4_longer_best.pt",
+
+  "train_good_fasta_path": "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/DTp_train.fasta",
+  "train_bad_fasta_path": "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/DTm_train_after-nll-filter.fasta",
+  "train_csv_mapping_path": "data/pairings/pair_split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/pair_train/top20_nt.csv",
+  "train_dataset_description": "Train Dataset (without VAE sequences in 25-30 distance range) filtered by NLL (95 percentile)",
+
+  "val_good_fasta_path": "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/DTp_val_plus-vae25-30-and-close.fasta",
+  "val_bad_fasta_path": "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/DTm_val_plus-vae25-30-and-close.fasta",
+  "val_csv_mapping_path": "data/pairings/pair_split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/pair_validation/top20_nt.csv",
+  "val_dataset_description": "Validation Dataset (with VAE sequences in 25-30 distance range) filtered by NLL (95 percentile)",
+  
+  "val_1_good_fasta_path": "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/DTp_vae25-30_plus-close-close.fasta",
+  "val_1_bad_fasta_path": "data/split_train_validation/split_fraction-0.15_add-vae-25-30-and-close-to-validation_nll-filtered_95/DTm_vae25-30_plus-close-close.fasta",
+  "val_1_dataset_description": "VAE sequences in 25-30 distance range and close to them",
+
+  "val_2_good_fasta_path": null,
+  "val_2_bad_fasta_path": null,
+  "val_2_dataset_description": "Dist 25-30 validation split",
+
+  "checkpoint_dir": "checkpoints/checkpoints_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-95/top20_nt/",
+  "image_dir": "images_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-95/top20_nt/",
+  "history_json_path": "images_roberto/split_0.15_vae25-30-and-close-in-test_nll-filter-95/top20_nt/history.json",
+
+  "block_size": 198,
+  "batch_size": 1024,
+  "learning_rate": 1e-5,
+  "num_epochs": 500,
+  "beta": 0.3,
+
+  "reint": false,
+  "lambda_reint": 1.0,
+
+  "n_embd": 64,
+  "n_head": 8,
+  "n_layer": 4,
+
+  "layers_to_freeze": 0,
+  "use_torch_compile": true,
+  "suppress_dynamo_errors": true,
+
+  "compute_full_nll_metrics": false,
+  "nll_rand_n_batches": 10,
+  "nll_rand_eval_batch_size_cap": 128,
+
+  "compute_val_separation_metric": true,
+  "dn_likelihood_mode": "fixed_subsample",
+  "dn_fixed_subsample_size": 800,
+  "dn_fixed_subsample_seed": 1234,
+  "full_eval_batch_size_cap": 256,
+
+  "eval_every_n_epochs": 10,
+  "distance_nll_ylim_min": 0.45,
+  "distance_nll_ylim_max": 3.0,
+  "scheduler_step_size": 10000,
+  "scheduler_gamma": 0.1
+}
