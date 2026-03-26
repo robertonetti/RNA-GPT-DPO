@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
+from typing import Any, Mapping
 
 
 # This dataclass centralizes every runtime setting used by the DPO training pipeline.
@@ -112,6 +115,38 @@ class Config:
     # Scheduler (mirrors notebook behavior)
     scheduler_step_size: int = 10000
     scheduler_gamma: float = 0.1
+
+
+def config_from_dict(overrides: Mapping[str, Any], base: Config | None = None) -> Config:
+    """Build a Config by merging ``overrides`` on top of ``base`` (or defaults)."""
+    if not isinstance(overrides, Mapping):
+        raise TypeError("Config overrides must be a mapping (dict-like object).")
+
+    field_names = {f.name for f in fields(Config)}
+    unknown_keys = sorted(set(overrides) - field_names)
+    if unknown_keys:
+        raise ValueError(
+            "Unknown config keys: "
+            + ", ".join(unknown_keys)
+            + ". Check field names in src/dpo_config.py"
+        )
+
+    base_cfg = base if base is not None else Config()
+    merged = {**asdict(base_cfg), **dict(overrides)}
+    return Config(**merged)
+
+
+def load_config_from_json(config_path: str | Path, base: Config | None = None) -> Config:
+    """Load a JSON config file and merge it with ``base`` (or defaults)."""
+    path = Path(config_path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("Config JSON must contain an object at top-level.")
+
+    return config_from_dict(raw, base=base)
 
 
 # Single global configuration instance imported by the training entrypoint.

@@ -17,7 +17,8 @@ This folder contains the modular source code for DPO training and all imported m
 
 From project root you can run one of the two commands:
 
-- `python3 DPO_train.py` (root-level compatible launcher)
+- `python3 DPO_train.py -config config.json` (recommended: load parameters from JSON)
+- `python3 DPO_train.py` (fallback: use defaults from `src/dpo_config.py`)
 - `python3 -m src.DPO_train`
 
 Both use the same configuration in `src/dpo_config.py`.
