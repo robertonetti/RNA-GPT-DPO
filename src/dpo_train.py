@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Epoch-based DPO training script extracted from DPO_train_epochs.ipynb.
+DPO training script extracted from DPO_train_epochs.ipynb.
 
 Edit the CONFIG section below to control all parameters, hyperparameters,
 input paths, checkpoint path, and image output path.
@@ -51,7 +51,7 @@ from src.dpo_train_utils import (
 # ## Main Training Entry                                                   ##
 # ###########################################################################
 def main(cfg: Config) -> None:
-    """Run the complete epoch-based DPO pipeline.
+    """Run the complete DPO pipeline with iteration-based evaluation cadence.
 
     Input:
     - cfg: ``Config`` dataclass with paths, model hyperparameters, and metric switches.
@@ -60,8 +60,8 @@ def main(cfg: Config) -> None:
     - Build vocabulary and tokenizer from DN data.
     - Load pretrained model and create frozen reference copy.
     - Build preference datasets and dataloaders.
-    - Evaluate baseline metrics (epoch 0).
-    - Train for ``cfg.num_epochs`` and evaluate after each epoch.
+    - Evaluate baseline metrics (iteration 0).
+    - Train for up to ``cfg.max_iterations`` optimizer steps and evaluate every fixed number of iterations.
     - Save checkpoints, plots, metric history JSON, and resolved config JSON.
 
     Output:
@@ -441,10 +441,10 @@ def main(cfg: Config) -> None:
         val_csv_mapping_path=val_csv_mapping_path,
     )
 
-    # Initialize history dictionary to store metrics across epochs for plotting and JSON export.
+    # Initialize history dictionary to store metrics across evaluation iterations.
     history: Dict[str, List[Any]] = {
-        # Store one value per epoch for each metric key.
-        "epoch": [],
+        # Store one value per evaluation step for each metric key.
+        "iteration": [],
         "dpo_train_batch_epoch": [],
         "dpo_train_full": [],
         "dpo_val_full": [],
@@ -476,12 +476,12 @@ def main(cfg: Config) -> None:
         "val_2_dist_nll_corr": [],
     }
 
-    if cfg.eval_every_n_epochs <= 0:
-        raise ValueError("eval_every_n_epochs must be > 0.")
-    eval_period = cfg.eval_every_n_epochs
+    if cfg.eval_every_n_iterations <= 0:
+        raise ValueError("eval_every_n_iterations must be > 0.")
+    eval_period_iterations = cfg.eval_every_n_iterations
 
     # #######################################################################
-    # ## Baseline Evaluation (Epoch 0)                                     ##
+    # ## Baseline Evaluation (Iteration 0)                                 ##
     # #######################################################################
 
     # Baseline (epoch 0)
@@ -518,7 +518,7 @@ def main(cfg: Config) -> None:
     # No train batches were run yet.
     baseline_metrics["dpo_train_batch_epoch"] = float("nan")
 
-    _append_history_row(history, {"epoch": 0, **baseline_metrics})
+    _append_history_row(history, {"iteration": 0, **baseline_metrics})
 
     # #######################################################################
     # ## Baseline Artifacts + Logs                                         ##
@@ -527,9 +527,9 @@ def main(cfg: Config) -> None:
     _save_eval_artifacts(
         history=history,
         image_dir=image_dir,
-        epoch=0,
+        iteration=0,
         dataset_descriptions=dataset_descriptions,
-        eval_period=eval_period,
+        eval_period_iterations=eval_period_iterations,
         train_good_distances=train_good_distances,
         train_bad_distances=train_bad_distances,
         val_good_distances=val_good_distances,
@@ -540,21 +540,33 @@ def main(cfg: Config) -> None:
     )
     _print_eval_block(
         title="BASELINE EVALUATION",
-        epoch_label="Epoch 0 / before training",
+        epoch_label="Iteration 0 / before training",
         cfg=cfg,
         metrics=baseline_metrics,
     )
 
     # #######################################################################
-    # ## Epoch Loop                                                        ##
+    # ## Training Loop                                                     ##
     # #######################################################################
 
-    for epoch in tqdm(range(1, cfg.num_epochs + 1), desc="Epochs"):
+    if cfg.max_iterations <= 0:
+        raise ValueError("max_iterations must be > 0.")
+
+    global_iteration = 0
+    epoch = 0
+    pending_train_batch_losses: List[float] = []
+
+    progress_bar = tqdm(total=cfg.max_iterations, desc="Iterations")
+    while global_iteration < cfg.max_iterations:
+        epoch += 1
         # ---- Training phase ----
         model.train()
-        epoch_batch_losses: List[float] = []
+        completed_epoch = True
 
         for x_w, x_l in train_loader:
+            if global_iteration >= cfg.max_iterations:
+                completed_epoch = False
+                break
             # Move preferred/dispreferred sequences to target device.
             x_w = x_w.to(device)
             x_l = x_l.to(device)
@@ -590,89 +602,87 @@ def main(cfg: Config) -> None:
             loss.backward()
             optimizer.step()
 
-            epoch_batch_losses.append(loss.item())
+            loss_value = loss.item()
+            pending_train_batch_losses.append(loss_value)
+            global_iteration += 1
+            progress_bar.update(1)
 
-        # Epoch-level LR update.
-        scheduler.step()
+            should_evaluate = (global_iteration % eval_period_iterations) == 0
+            if not should_evaluate:
+                continue
 
-        should_evaluate = (epoch % eval_period) == 0
-        if not should_evaluate:
-            ckpt_path = checkpoint_dir / f"dpo_model_epoch{epoch}.pt"
-            # Save model checkpoint every epoch.
-            torch.save(model.state_dict(), ckpt_path)
-            print(f"Checkpoint saved: {ckpt_path}")
+            # ---- Evaluation phase ----
+            model.eval()
+            with torch.inference_mode():
+                # Average training loss over batches since previous evaluation.
+                dpo_train_batch_epoch = sum(pending_train_batch_losses) / max(len(pending_train_batch_losses), 1)
+                iteration_metrics = _evaluate_model_state(
+                    model=model,
+                    ref_model=ref_model,
+                    train_eval_loader=train_eval_loader,
+                    val_loader=val_loader,
+                    pad_token=pad_token,
+                    device=device,
+                    cfg=cfg,
+                    dpo_dataset=dpo_dataset,
+                    val_dpo_dataset=val_dpo_dataset,
+                    val_enabled=val_enabled,
+                    val_1_enabled=val_1_enabled,
+                    val_2_enabled=val_2_enabled,
+                    val_1_good_data=val_1_good_data,
+                    val_1_bad_data=val_1_bad_data,
+                    val_2_good_data=val_2_good_data,
+                    val_2_bad_data=val_2_bad_data,
+                    dn_eval_data=dn_eval_data,
+                    train_good_distances=train_good_distances,
+                    train_bad_distances=train_bad_distances,
+                    val_good_distances=val_good_distances,
+                    val_bad_distances=val_bad_distances,
+                    val_1_good_distances=val_1_good_distances,
+                    val_1_bad_distances=val_1_bad_distances,
+                    val_2_good_distances=val_2_good_distances,
+                    val_2_bad_distances=val_2_bad_distances,
+                )
+                iteration_metrics["dpo_train_batch_epoch"] = dpo_train_batch_epoch
 
-            # History is updated only on evaluation epochs.
-            history_json_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
-            continue
+            _append_history_row(history, {"iteration": global_iteration, **iteration_metrics})
 
-        # ---- Evaluation phase ----
-        model.eval()
-        with torch.inference_mode():
-            # Average training loss over all batches in this epoch.
-            dpo_train_batch_epoch = sum(epoch_batch_losses) / max(len(epoch_batch_losses), 1)
-            epoch_metrics = _evaluate_model_state(
-                model=model,
-                ref_model=ref_model,
-                train_eval_loader=train_eval_loader,
-                val_loader=val_loader,
-                pad_token=pad_token,
-                device=device,
-                cfg=cfg,
-                dpo_dataset=dpo_dataset,
-                val_dpo_dataset=val_dpo_dataset,
-                val_enabled=val_enabled,
-                val_1_enabled=val_1_enabled,
-                val_2_enabled=val_2_enabled,
-                val_1_good_data=val_1_good_data,
-                val_1_bad_data=val_1_bad_data,
-                val_2_good_data=val_2_good_data,
-                val_2_bad_data=val_2_bad_data,
-                dn_eval_data=dn_eval_data,
+            _save_eval_artifacts(
+                history=history,
+                image_dir=image_dir,
+                iteration=global_iteration,
+                dataset_descriptions=dataset_descriptions,
+                eval_period_iterations=eval_period_iterations,
                 train_good_distances=train_good_distances,
                 train_bad_distances=train_bad_distances,
                 val_good_distances=val_good_distances,
                 val_bad_distances=val_bad_distances,
-                val_1_good_distances=val_1_good_distances,
-                val_1_bad_distances=val_1_bad_distances,
-                val_2_good_distances=val_2_good_distances,
-                val_2_bad_distances=val_2_bad_distances,
+                build_distance_binned_entries=_build_distance_binned_entries,
+                distance_nll_ylim_min=cfg.distance_nll_ylim_min,
+                distance_nll_ylim_max=cfg.distance_nll_ylim_max,
             )
-            epoch_metrics["dpo_train_batch_epoch"] = dpo_train_batch_epoch
-        _append_history_row(history, {"epoch": epoch, **epoch_metrics})
+            _print_eval_block(
+                title="ITERATION EVALUATION",
+                epoch_label=f"Iteration {global_iteration} / epoch {epoch}",
+                cfg=cfg,
+                metrics=iteration_metrics,
+            )
 
-        # ###################################################################
-        # ## Per-Eval Epoch Artifacts + Logs                               ##
-        # ###################################################################
+            ckpt_path = checkpoint_dir / f"dpo_model_iter{global_iteration}.pt"
+            torch.save(model.state_dict(), ckpt_path)
+            print(f"Checkpoint saved: {ckpt_path}")
 
-        _save_eval_artifacts(
-            history=history,
-            image_dir=image_dir,
-            epoch=epoch,
-            dataset_descriptions=dataset_descriptions,
-            eval_period=eval_period,
-            train_good_distances=train_good_distances,
-            train_bad_distances=train_bad_distances,
-            val_good_distances=val_good_distances,
-            val_bad_distances=val_bad_distances,
-            build_distance_binned_entries=_build_distance_binned_entries,
-            distance_nll_ylim_min=cfg.distance_nll_ylim_min,
-            distance_nll_ylim_max=cfg.distance_nll_ylim_max,
-        )
-        _print_eval_block(
-            title="EPOCH EVALUATION",
-            epoch_label=f"Epoch {epoch} / {cfg.num_epochs}",
-            cfg=cfg,
-            metrics=epoch_metrics,
-        )
+            # Save cumulative history after each evaluation for crash safety.
+            history_json_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
 
-        ckpt_path = checkpoint_dir / f"dpo_model_epoch{epoch}.pt"
-        # Save model checkpoint every epoch.
-        torch.save(model.state_dict(), ckpt_path)
-        print(f"Checkpoint saved: {ckpt_path}")
+            pending_train_batch_losses = []
+            model.train()
 
-        # Save cumulative history after each epoch for crash safety.
-        history_json_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+            # Epoch-level LR update only after a full dataloader pass.
+            if completed_epoch:
+                scheduler.step()
+
+            progress_bar.close()
 
     # #######################################################################
     # ## Final Run Metadata                                                 ##

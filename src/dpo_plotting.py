@@ -71,18 +71,18 @@ def save_epoch_figures(
     - None. Writes PNG files to disk.
     """
     # X-axis values shared by all time-series panels.
-    epochs = history["epoch"]
+    iterations = history["iteration"]
 
     # Figure 1: training curves across epochs (2x2 layout).
     fig_main, axes_main = plt.subplots(2, 2, figsize=(20, 12))
 
     ax_nll = axes_main[0, 0]
-    nll_train_good_line = ax_nll.plot(epochs, history["nll_train_good_rand"], marker="o", label="NLL Train Good (rand)")[0]
-    nll_train_bad_line = ax_nll.plot(epochs, history["nll_train_bad_rand"], marker="o", label="NLL Train Bad (rand)")[0]
+    nll_train_good_line = ax_nll.plot(iterations, history["nll_train_good_rand"], marker="o", label="NLL Train Good (rand)")[0]
+    nll_train_bad_line = ax_nll.plot(iterations, history["nll_train_bad_rand"], marker="o", label="NLL Train Bad (rand)")[0]
     has_val_nll = any(v == v for v in history["nll_val_good_rand"]) and any(v == v for v in history["nll_val_bad_rand"])
     if has_val_nll:
-        nll_val_good_line = ax_nll.plot(epochs, history["nll_val_good_rand"], marker="o", label="NLL Val Good (rand)")[0]
-        nll_val_bad_line = ax_nll.plot(epochs, history["nll_val_bad_rand"], marker="o", label="NLL Val Bad (rand)")[0]
+        nll_val_good_line = ax_nll.plot(iterations, history["nll_val_good_rand"], marker="o", label="NLL Val Good (rand)")[0]
+        nll_val_bad_line = ax_nll.plot(iterations, history["nll_val_bad_rand"], marker="o", label="NLL Val Bad (rand)")[0]
     else:
         nll_val_good_line = None
         nll_val_bad_line = None
@@ -90,7 +90,7 @@ def save_epoch_figures(
     val_desc = "" if dataset_descriptions is None else dataset_descriptions.get("val", "").strip()
     nll_title = _format_main_panel_title("NLL Metrics (Random Batches)", train_desc, val_desc)
     ax_nll.set_title(nll_title)
-    ax_nll.set_xlabel("Epoch")
+    ax_nll.set_xlabel("Iteration")
     ax_nll.set_ylabel("NLL")
     ax_nll.grid(alpha=0.3)
 
@@ -107,7 +107,7 @@ def save_epoch_figures(
 
     ax_margin = axes_main[0, 1]
     margin_train_line = ax_margin.plot(
-        epochs,
+        iterations,
         history["nll_margin_train_rand"],
         color="black",
         linestyle="--",
@@ -117,7 +117,7 @@ def save_epoch_figures(
     has_val_margin = any(v == v for v in history["nll_margin_val_rand"])
     if has_val_margin:
         margin_val_line = ax_margin.plot(
-            epochs,
+            iterations,
             history["nll_margin_val_rand"],
             color="gray",
             linestyle="-.",
@@ -128,7 +128,7 @@ def save_epoch_figures(
         margin_val_line = None
     margin_title = _format_main_panel_title("NLL Margin (Bad - Good)", train_desc, val_desc)
     ax_margin.set_title(margin_title)
-    ax_margin.set_xlabel("Epoch")
+    ax_margin.set_xlabel("Iteration")
     ax_margin.set_ylabel("Margin")
     ax_margin.grid(alpha=0.3)
     margin_lines = [margin_train_line]
@@ -137,22 +137,22 @@ def save_epoch_figures(
     ax_margin.legend(margin_lines, [line.get_label() for line in margin_lines], loc="best")
 
     ax_dn = axes_main[1, 0]
-    ax_dn.plot(epochs, history["mean_like_model"], marker="o", label="DN mean token likelihood (model)")
-    ax_dn.plot(epochs, history["mean_like_ref"], marker="o", linestyle="--", label="DN mean token likelihood (reference)")
+    ax_dn.plot(iterations, history["mean_like_model"], marker="o", label="DN mean token likelihood (model)")
+    ax_dn.plot(iterations, history["mean_like_ref"], marker="o", linestyle="--", label="DN mean token likelihood (reference)")
     ax_dn.set_title("DN Mean Token Likelihood")
-    ax_dn.set_xlabel("Epoch")
+    ax_dn.set_xlabel("Iteration")
     ax_dn.set_ylabel("Likelihood")
     ax_dn.grid(alpha=0.3)
     ax_dn.legend()
 
     ax_dpo = axes_main[1, 1]
-    ax_dpo.plot(epochs, history["dpo_train_batch_epoch"], marker="o", label="DPO Train Batch Mean")
-    ax_dpo.plot(epochs, history["dpo_train_full"], marker="o", label="DPO Full Train")
+    ax_dpo.plot(iterations, history["dpo_train_batch_epoch"], marker="o", label="DPO Train Batch Mean")
+    ax_dpo.plot(iterations, history["dpo_train_full"], marker="o", label="DPO Full Train")
     if any(v == v for v in history["dpo_val_full"]):
-        ax_dpo.plot(epochs, history["dpo_val_full"], marker="o", label="DPO Full Val")
+        ax_dpo.plot(iterations, history["dpo_val_full"], marker="o", label="DPO Full Val")
     dpo_title = _format_main_panel_title("DPO Loss", train_desc, val_desc)
     ax_dpo.set_title(dpo_title)
-    ax_dpo.set_xlabel("Epoch")
+    ax_dpo.set_xlabel("Iteration")
     ax_dpo.set_ylabel("Loss")
     ax_dpo.grid(alpha=0.3)
     ax_dpo.legend()
@@ -318,28 +318,28 @@ def _plot_violin_history_panel(
 def save_periodic_violin_history_figure(
     history: Dict[str, List[Any]],
     output_path: Path,
-    every_n_epochs: int,
+    every_n_iterations: int,
     dataset_descriptions: Dict[str, str] | None = None,
 ) -> None:
-    """Save the cumulative 4-panel violin figure using epochs sampled every N.
+    """Save the cumulative 4-panel violin figure using iterations sampled every N.
 
     Inputs:
-    - history: Metric dictionary containing epoch and per-split NLL distributions.
+    - history: Metric dictionary containing iteration and per-split NLL distributions.
     - output_path: Destination path of the generated PNG.
-    - every_n_epochs: Sampling period for epochs shown on x-axis.
+    - every_n_iterations: Sampling period for iterations shown on x-axis.
 
     Output:
     - None. Writes the figure to disk.
     """
-    if every_n_epochs <= 0:
-        raise ValueError("every_n_epochs must be > 0")
+    if every_n_iterations <= 0:
+        raise ValueError("every_n_iterations must be > 0")
 
     sampled_indices: List[int] = []
-    sampled_epochs: List[int] = []
-    for idx, epoch in enumerate(history["epoch"]):
-        if epoch % every_n_epochs == 0:
+    sampled_iterations: List[int] = []
+    for idx, iteration in enumerate(history["iteration"]):
+        if iteration % every_n_iterations == 0:
             sampled_indices.append(idx)
-            sampled_epochs.append(int(epoch))
+            sampled_iterations.append(int(iteration))
 
     all_panel_specs = [
         (
@@ -394,7 +394,7 @@ def save_periodic_violin_history_figure(
         pearsons = [history[corr_key][i] for i in sampled_indices]
         _plot_violin_history_panel(
             ax=ax,
-            epochs=sampled_epochs,
+            epochs=sampled_iterations,
             good_distributions=good_distributions,
             bad_distributions=bad_distributions,
             pearsons=pearsons,
@@ -403,8 +403,8 @@ def save_periodic_violin_history_figure(
 
     fig.suptitle(
         (
-            f"Per-epoch NLL violins (sampled every {every_n_epochs} epochs)\n"
-            "Annotations per epoch:\n r = Pearson(distance from reference, NLL);\n "
+            f"Per-iteration NLL violins (sampled every {every_n_iterations} iterations)\n"
+            "Annotations per iteration:\n r = Pearson(distance from reference, NLL);\n "
             "dp (p10(bad)-p90(good)) = separation margin between lower bad tail and upper good tail; "
         ),
         fontsize=20,
@@ -493,7 +493,7 @@ def _compute_binned_correlations(
 
 def save_distance_binned_correlation_figure(
     output_path: Path,
-    epoch: int,
+    iteration: int,
     dataset_entries: Sequence[Dict[str, Any]],
 ) -> None:
     """Save distance-bin vs Pearson(distance, NLL) bars for each available dataset.
@@ -655,7 +655,7 @@ def save_distance_binned_correlation_figure(
             ax.legend(loc="upper right")
 
     fig.suptitle(
-        f"Distance-binned correlation vs NLL (epoch {epoch})",
+        f"Distance-binned correlation vs NLL (iteration {iteration})",
         fontsize=16,
         fontweight="bold",
     )
@@ -761,7 +761,7 @@ def _plot_distance_nll_scatter_panel(
 
 def save_distance_nll_scatter_figure(
     output_path: Path,
-    epoch: int,
+    iteration: int,
     train_title: str,
     train_good_distances: Sequence[float],
     train_bad_distances: Sequence[float],
@@ -800,7 +800,7 @@ def save_distance_nll_scatter_figure(
     )
 
     fig.suptitle(
-        f"Distance-binned NLL violins (epoch {epoch})",
+        f"Distance-binned NLL violins (iteration {iteration})",
         fontsize=16,
         fontweight="bold",
     )

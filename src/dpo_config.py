@@ -53,7 +53,7 @@ class Config:
     block_size: int = 198
     batch_size: int = 1024
     learning_rate: float = 1e-4
-    num_epochs: int = 500
+    max_iterations: int = 500
     # Beta coefficient for DPO loss: higher values put more emphasis on correctly classifying the worse sequence in each pair.
     beta: float = 0.3
 
@@ -105,8 +105,8 @@ class Config:
     # Full-metric batch sizes
     full_eval_batch_size_cap: int = 256
 
-    # Run evaluation and save plots every N training epochs (plus baseline epoch 0).
-    eval_every_n_epochs: int = 10
+    # Run evaluation and save plots/checkpoints every N training iterations (plus baseline iteration 0).
+    eval_every_n_iterations: int = 10
 
     # Y-limits for distance-binned NLL violin figure.
     distance_nll_ylim_min: float = 0.45

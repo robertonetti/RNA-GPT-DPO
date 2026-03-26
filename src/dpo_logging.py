@@ -77,7 +77,7 @@ def print_run_configuration(
     print(f"  torch.compile                   : {cfg.use_torch_compile}")
     print(f"  Suppress torch._dynamo errors   : {cfg.suppress_dynamo_errors}")
     print("\nTraining hyperparameters:")
-    print(f"  Epochs                          : {cfg.num_epochs}")
+    print(f"  Max iterations                  : {cfg.max_iterations}")
     print(f"  Batch size                      : {cfg.batch_size}")
     print(f"  Learning rate                   : {cfg.learning_rate}")
     print(f"  Beta (DPO)                      : {cfg.beta}")

@@ -53,7 +53,7 @@ def _has_path(path_value: str | None) -> bool:
 
 
 def _append_history_row(history: Dict[str, List[Any]], row: Dict[str, Any]) -> None:
-    """Append one epoch row to every metric list in history."""
+    """Append one evaluation row to every metric list in history."""
     for key in history:
         history[key].append(row[key])
 
@@ -61,9 +61,9 @@ def _append_history_row(history: Dict[str, List[Any]], row: Dict[str, Any]) -> N
 def _save_eval_artifacts(
     history: Dict[str, List[Any]],
     image_dir: Path,
-    epoch: int,
+    iteration: int,
     dataset_descriptions: Dict[str, str],
-    eval_period: int,
+    eval_period_iterations: int,
     train_good_distances: torch.Tensor,
     train_bad_distances: torch.Tensor,
     val_good_distances: torch.Tensor,
@@ -75,18 +75,18 @@ def _save_eval_artifacts(
     """Save all figures generated at one evaluation step."""
     save_epoch_figures(
         history,
-        main_path=image_dir / f"epoch_{epoch:03d}_main.png",
+        main_path=image_dir / f"iter_{iteration:06d}_main.png",
         dataset_descriptions=dataset_descriptions,
     )
     save_periodic_violin_history_figure(
         history=history,
-        output_path=image_dir / f"epoch_{epoch:03d}_violin_history.png",
-        every_n_epochs=eval_period,
+        output_path=image_dir / f"iter_{iteration:06d}_violin_history.png",
+        every_n_iterations=eval_period_iterations,
         dataset_descriptions=dataset_descriptions,
     )
     save_distance_binned_correlation_figure(
-        output_path=image_dir / f"epoch_{epoch:03d}_distance_bin_corr.png",
-        epoch=epoch,
+        output_path=image_dir / f"iter_{iteration:06d}_distance_bin_corr.png",
+        iteration=iteration,
         dataset_entries=build_distance_binned_entries(
             train_good_nll=history["train_good_seq_nll"][-1],
             train_bad_nll=history["train_bad_seq_nll"][-1],
@@ -99,8 +99,8 @@ def _save_eval_artifacts(
         ),
     )
     save_distance_nll_scatter_figure(
-        output_path=image_dir / f"epoch_{epoch:03d}_distance_nll_scatter.png",
-        epoch=epoch,
+        output_path=image_dir / f"iter_{iteration:06d}_distance_nll_scatter.png",
+        iteration=iteration,
         train_title=f"train | {dataset_descriptions.get('train', '').strip()}".strip(" |"),
         train_good_distances=train_good_distances.tolist(),
         train_bad_distances=train_bad_distances.tolist(),
