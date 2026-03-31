@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import random
 from dataclasses import asdict
 from pathlib import Path
@@ -20,11 +21,11 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from src.transformer import GPTTransformer
-from src.Transformer_Reint import load_dataset
+from src_precomputed.transformer import GPTTransformer
+from src_precomputed.Transformer_Reint import load_dataset
 
-from src.dpo_config import Config, CONFIG
-from src.dpo_data import (
+from src_precomputed.dpo_config import Config, CONFIG
+from src_precomputed.dpo_data import (
     resolve_path,
     read_fasta,
     pad_encode,
@@ -32,13 +33,15 @@ from src.dpo_data import (
     PreferencePairDataset,
     _build_labels_from_inputs,
 )
-from src.dpo_metrics import (
+from src_precomputed.dpo_metrics import (
     compute_batched_token_level_kd_loss_from_tensors,
     compute_dpo_loss_from_tensors,
+    compute_mean_token_likelihood,
     compute_reint_loss_from_tensors,
+    compute_sequence_logprobs,
 )
-from src.dpo_logging import print_run_configuration
-from src.dpo_train_utils import (
+from src_precomputed.dpo_logging import print_run_configuration
+from src_precomputed.dpo_train_utils import (
     _append_history_row,
     _distance_to_reference,
     _evaluate_model_state,
@@ -51,6 +54,33 @@ from src.dpo_train_utils import (
 # ###########################################################################
 # ## Main Training Entry                                                   ##
 # ###########################################################################
+def _attach_ref_logprobs_to_dataset(
+    dataset: Dict[str, Any] | None,
+    ref_model,
+    pad_token: int,
+    device: torch.device,
+    batch_size: int,
+) -> None:
+    """Precompute and store reference sequence log-probabilities in-place."""
+    if dataset is None:
+        return
+
+    dataset["ref_good_logps"] = compute_sequence_logprobs(
+        ref_model,
+        dataset["good_data"],
+        pad_token,
+        device,
+        batch_size=batch_size,
+    )
+    dataset["ref_bad_logps"] = compute_sequence_logprobs(
+        ref_model,
+        dataset["bad_data"],
+        pad_token,
+        device,
+        batch_size=batch_size,
+    )
+
+
 def main(cfg: Config) -> None:
     """Run the complete DPO pipeline with iteration-based evaluation cadence.
 
@@ -379,25 +409,79 @@ def main(cfg: Config) -> None:
     else:
         val_dpo_dataset = None
 
-    val_1_good_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in val_1_good_sequences] # shape (N_val_1_good, block_size)
-    val_1_bad_data = [pad_encode(s, cfg.block_size, pad_token, encode) for s in val_1_bad_sequences] # shape (N_val_1_bad, block_size)
+    _attach_ref_logprobs_to_dataset(
+        dpo_dataset,
+        ref_model,
+        pad_token,
+        device,
+        batch_size=cfg.batch_size,
+    )
+    _attach_ref_logprobs_to_dataset(
+        val_dpo_dataset,
+        ref_model,
+        pad_token,
+        device,
+        batch_size=cfg.batch_size,
+    )
+    val_1_good_data = (
+        torch.stack([pad_encode(s, cfg.block_size, pad_token, encode) for s in val_1_good_sequences], dim=0)
+        if len(val_1_good_sequences) > 0
+        else torch.empty((0, cfg.block_size), dtype=torch.long)
+    ) # shape (N_val_1_good, block_size)
+    val_1_bad_data = (
+        torch.stack([pad_encode(s, cfg.block_size, pad_token, encode) for s in val_1_bad_sequences], dim=0)
+        if len(val_1_bad_sequences) > 0
+        else torch.empty((0, cfg.block_size), dtype=torch.long)
+    ) # shape (N_val_1_bad, block_size)
 
-    val_2_good_data = [
-        pad_encode(s, cfg.block_size, pad_token, encode) for s in val_2_good_sequences
-    ] # shape (N_val_2_good, block_size)
-    val_2_bad_data = [
-        pad_encode(s, cfg.block_size, pad_token, encode) for s in val_2_bad_sequences
-    ] # shape (N_val_2_bad, block_size)
+    val_2_good_data = (
+        torch.stack([pad_encode(s, cfg.block_size, pad_token, encode) for s in val_2_good_sequences], dim=0)
+        if len(val_2_good_sequences) > 0
+        else torch.empty((0, cfg.block_size), dtype=torch.long)
+    ) # shape (N_val_2_good, block_size)
+    val_2_bad_data = (
+        torch.stack([pad_encode(s, cfg.block_size, pad_token, encode) for s in val_2_bad_sequences], dim=0)
+        if len(val_2_bad_sequences) > 0
+        else torch.empty((0, cfg.block_size), dtype=torch.long)
+    ) # shape (N_val_2_bad, block_size)
+    val_1_good_labels = _build_labels_from_inputs(val_1_good_data, pad_token)
+    val_1_bad_labels = _build_labels_from_inputs(val_1_bad_data, pad_token)
+    val_2_good_labels = _build_labels_from_inputs(val_2_good_data, pad_token)
+    val_2_bad_labels = _build_labels_from_inputs(val_2_bad_data, pad_token)
 
     # Create DataLoaders for training/validation pairs and extra eval sets.
     train_pair_dataset = PreferencePairDataset(dpo_dataset) # shape (N_train_pairs, 2) where each item is (good_idx, bad_idx)
     val_pair_dataset = PreferencePairDataset(val_dpo_dataset) if val_enabled else None # shape (N_val_pairs, 2) where each item is (good_idx, bad_idx)
 
+    loader_num_workers = (
+        cfg.dataloader_num_workers
+        if cfg.dataloader_num_workers is not None
+        else min(4, os.cpu_count() or 0) if device.type == "cuda" else 0
+    )
+    loader_pin_memory = (
+        cfg.dataloader_pin_memory
+        if cfg.dataloader_pin_memory is not None
+        else device.type == "cuda"
+    )
+    loader_kwargs: Dict[str, Any] = {
+        "batch_size": cfg.batch_size,
+        "drop_last": False,
+        "num_workers": loader_num_workers,
+        "pin_memory": loader_pin_memory,
+    }
+    if loader_num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = cfg.dataloader_prefetch_factor
+
     # Train loader is shuffled; eval loaders are deterministic.
-    train_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=False) # shape (N_train_pairs // batch_size, batch_size, 2)
-    train_eval_loader = DataLoader(train_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False) # shape (N_train_pairs // batch_size, batch_size, 2)
+    train_loader = DataLoader(
+        train_pair_dataset, shuffle=True, collate_fn=train_pair_dataset.collate_fn, **loader_kwargs
+    ) # shape (N_train_pairs // batch_size, batch_size, 2)
+    train_eval_loader = DataLoader(
+        train_pair_dataset, shuffle=False, collate_fn=train_pair_dataset.collate_fn, **loader_kwargs
+    ) # shape (N_train_pairs // batch_size, batch_size, 2)
     val_loader = (
-        DataLoader(val_pair_dataset, batch_size=cfg.batch_size, shuffle=False, drop_last=False)
+        DataLoader(val_pair_dataset, shuffle=False, collate_fn=val_pair_dataset.collate_fn, **loader_kwargs)
         if val_enabled
         else None
     ) # shape (N_val_pairs // batch_size, batch_size, 2)
@@ -418,6 +502,18 @@ def main(cfg: Config) -> None:
         dn_eval_data = [dn_full_data[i] for i in dn_eval_indices]
     else:
         raise ValueError("dn_likelihood_mode must be either 'full' or 'fixed_subsample'.")
+    dn_eval_data = (
+        torch.stack(dn_eval_data, dim=0)
+        if len(dn_eval_data) > 0
+        else torch.empty((0, cfg.max_context), dtype=torch.long)
+    )
+    dn_eval_labels = _build_labels_from_inputs(dn_eval_data, pad_token)
+
+    full_eval_bs = min(cfg.batch_size, cfg.full_eval_batch_size_cap)
+    with torch.inference_mode():
+        mean_like_ref_precomputed = compute_mean_token_likelihood(
+            ref_model, dn_eval_data, pad_token, device, batch_size=full_eval_bs
+        )
 
     # #######################################################################
     # ## Run Summary + History Initialization                              ##
@@ -506,6 +602,11 @@ def main(cfg: Config) -> None:
             val_2_good_data=val_2_good_data,
             val_2_bad_data=val_2_bad_data,
             dn_eval_data=dn_eval_data,
+            val_1_good_labels=val_1_good_labels,
+            val_1_bad_labels=val_1_bad_labels,
+            val_2_good_labels=val_2_good_labels,
+            val_2_bad_labels=val_2_bad_labels,
+            dn_eval_labels=dn_eval_labels,
             train_good_distances=train_good_distances,
             train_bad_distances=train_bad_distances,
             val_good_distances=val_good_distances,
@@ -514,6 +615,7 @@ def main(cfg: Config) -> None:
             val_1_bad_distances=val_1_bad_distances,
             val_2_good_distances=val_2_good_distances,
             val_2_bad_distances=val_2_bad_distances,
+            mean_like_ref_precomputed=mean_like_ref_precomputed,
         )
 
     # No train batches were run yet.
@@ -565,16 +667,29 @@ def main(cfg: Config) -> None:
         model.train()
         completed_epoch = True
 
-        for x_w, x_l in train_loader:
+        for batch in train_loader:
             if global_iteration >= cfg.max_iterations:
                 completed_epoch = False
                 break
+            if len(batch) == 6:
+                x_w, x_l, y_w, y_l, ref_logps_w, ref_logps_l = batch
+                ref_logps_w = ref_logps_w.to(device, non_blocking=loader_pin_memory)
+                ref_logps_l = ref_logps_l.to(device, non_blocking=loader_pin_memory)
+            elif len(batch) == 4:
+                x_w, x_l, y_w, y_l = batch
+                ref_logps_w = None
+                ref_logps_l = None
+            else:
+                x_w, x_l = batch
+                y_w = _build_labels_from_inputs(x_w, pad_token)
+                y_l = _build_labels_from_inputs(x_l, pad_token)
+                ref_logps_w = None
+                ref_logps_l = None
             # Move preferred/dispreferred sequences to target device.
-            x_w = x_w.to(device)
-            x_l = x_l.to(device)
-            # Build next-token labels by shifting inputs.
-            y_w = _build_labels_from_inputs(x_w, pad_token)
-            y_l = _build_labels_from_inputs(x_l, pad_token)
+            x_w = x_w.to(device, non_blocking=loader_pin_memory)
+            x_l = x_l.to(device, non_blocking=loader_pin_memory)
+            y_w = y_w.to(device, non_blocking=loader_pin_memory)
+            y_l = y_l.to(device, non_blocking=loader_pin_memory)
 
             # Standard optimization step.
             optimizer.zero_grad(set_to_none=True)
@@ -618,6 +733,8 @@ def main(cfg: Config) -> None:
                     y_l,
                     pad_token=pad_token,
                     beta=cfg.beta,
+                    ref_logps_w=ref_logps_w,
+                    ref_logps_l=ref_logps_l,
                 )
             loss.backward()
             optimizer.step()
@@ -654,6 +771,11 @@ def main(cfg: Config) -> None:
                     val_2_good_data=val_2_good_data,
                     val_2_bad_data=val_2_bad_data,
                     dn_eval_data=dn_eval_data,
+                    val_1_good_labels=val_1_good_labels,
+                    val_1_bad_labels=val_1_bad_labels,
+                    val_2_good_labels=val_2_good_labels,
+                    val_2_bad_labels=val_2_bad_labels,
+                    dn_eval_labels=dn_eval_labels,
                     train_good_distances=train_good_distances,
                     train_bad_distances=train_bad_distances,
                     val_good_distances=val_good_distances,
@@ -662,6 +784,7 @@ def main(cfg: Config) -> None:
                     val_1_bad_distances=val_1_bad_distances,
                     val_2_good_distances=val_2_good_distances,
                     val_2_bad_distances=val_2_bad_distances,
+                    mean_like_ref_precomputed=mean_like_ref_precomputed,
                 )
                 iteration_metrics["dpo_train_batch_epoch"] = dpo_train_batch_epoch
 

@@ -109,6 +109,12 @@ class Config:
     # Full-metric batch sizes
     full_eval_batch_size_cap: int = 256
 
+    # Data loading
+    # If None, choose automatically from the runtime device.
+    dataloader_num_workers: int | None = None
+    dataloader_pin_memory: bool | None = None
+    dataloader_prefetch_factor: int = 2
+
     # Run evaluation and save plots/checkpoints every N training iterations (plus baseline iteration 0).
     eval_every_n_iterations: int = 10
 
