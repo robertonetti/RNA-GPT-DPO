@@ -11,3 +11,9 @@ data_2.zip
 DPO_train_old
 DPO_train_old.py
 nohup.out
+configs/
+images_dpo/
+output_plots/
+.codex
+run_dpo.sh
+notebooks/nll_vs_distance_train_scatter_density_hist_thresholds.png
