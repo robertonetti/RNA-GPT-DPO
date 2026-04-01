@@ -74,6 +74,20 @@ def _compute_paired_sequence_logprobs(
     return logps_cat[:batch_size], logps_cat[batch_size:]
 
 
+def _compute_paired_sequence_logprobs_separately(
+    model,
+    x_w: torch.Tensor,
+    y_w: torch.Tensor,
+    x_l: torch.Tensor,
+    y_l: torch.Tensor,
+    pad_token: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run separate forwards for winner/loser inputs to reduce peak activation memory."""
+    logps_w = get_logprobs(model(x_w)["logits"], y_w, pad_token)
+    logps_l = get_logprobs(model(x_l)["logits"], y_l, pad_token)
+    return logps_w, logps_l
+
+
 def _slice_data_batch(
     data: torch.Tensor | List[torch.Tensor],
     start: int,
@@ -198,9 +212,18 @@ def compute_reint_loss_from_tensors(
     Output:
     - Scalar tensor: mean DPO loss.
     """
-    logps_w, logps_l = _compute_paired_sequence_logprobs(
-        model, x_w, y_w, x_l, y_l, pad_token
-    )
+    # In the training path this loss is often combined with token-level KD before
+    # a single backward call. Keeping winner/loser in separate forwards avoids
+    # doubling the policy activation footprint and matches the original memory
+    # profile that fit on GPU.
+    if torch.is_grad_enabled():
+        logps_w, logps_l = _compute_paired_sequence_logprobs_separately(
+            model, x_w, y_w, x_l, y_l, pad_token
+        )
+    else:
+        logps_w, logps_l = _compute_paired_sequence_logprobs(
+            model, x_w, y_w, x_l, y_l, pad_token
+        )
 
     # with torch.no_grad():
     #     ref_logits_w = ref_model(x_w)["logits"]

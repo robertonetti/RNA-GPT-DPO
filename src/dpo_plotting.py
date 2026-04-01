@@ -4,6 +4,9 @@ from pathlib import Path
 from textwrap import fill
 from typing import Dict, List, Any, Sequence
 
+import matplotlib
+# Force a non-interactive backend for batch jobs to avoid Tk cleanup crashes.
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
