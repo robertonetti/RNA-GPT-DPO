@@ -8,6 +8,6 @@
 #SBATCH --time=1-10:00:00
 #SBATCH --cpus-per-task=2
 
-CONFIG_PATH="config.json"
+CONFIG_PATH="configs/configs_reint_dkl/config_l=0.json"
 
 python DPO_train.py -config "$CONFIG_PATH"
