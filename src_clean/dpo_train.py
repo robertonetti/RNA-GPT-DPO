@@ -28,13 +28,14 @@ from src_clean.dpo_data import (
 from src_clean.dpo_metrics import (
     attach_ref_logprobs,
     compute_batched_kl_loss,
+    compute_auroc_from_good_bad_nll,
     compute_full_preference_loss_from_loader,
     compute_mean_token_likelihood,
     compute_preference_loss,
     compute_preference_loss_from_batch_in_chunks,
     compute_sequence_nll,
 )
-from src_clean.dpo_plotting import save_main_figure, save_violin_history
+from src_clean.dpo_plotting import save_auroc_figure, save_main_figure, save_violin_history
 from src_clean.transformer import GPTTransformer
 
 
@@ -190,14 +191,15 @@ def _evaluate_model(
         ),
     }
 
-    if not cfg.full_tracking:
+    need_sequence_metrics = cfg.full_tracking or cfg.compute_auroc
+    if not need_sequence_metrics:
         return metrics
 
     (
-        metrics["train_good_seq_nll"],
-        metrics["train_bad_seq_nll"],
-        metrics["train_good_nll_mean"],
-        metrics["train_bad_nll_mean"],
+        train_good_seq_nll,
+        train_bad_seq_nll,
+        train_good_nll_mean,
+        train_bad_nll_mean,
     ) = _evaluate_split_nll(model, {
         "good_data": train_pairs.good_data,
         "bad_data": train_pairs.bad_data,
@@ -206,10 +208,10 @@ def _evaluate_model(
     }, cfg, pad_token, device)
 
     (
-        metrics["val_good_seq_nll"],
-        metrics["val_bad_seq_nll"],
-        metrics["val_good_nll_mean"],
-        metrics["val_bad_nll_mean"],
+        val_good_seq_nll,
+        val_bad_seq_nll,
+        val_good_nll_mean,
+        val_bad_nll_mean,
     ) = _evaluate_split_nll(model, None if val_pairs is None else {
         "good_data": val_pairs.good_data,
         "bad_data": val_pairs.bad_data,
@@ -218,11 +220,41 @@ def _evaluate_model(
     }, cfg, pad_token, device)
 
     (
-        metrics["val_1_good_seq_nll"],
-        metrics["val_1_bad_seq_nll"],
-        metrics["val_1_good_nll_mean"],
-        metrics["val_1_bad_nll_mean"],
+        val_1_good_seq_nll,
+        val_1_bad_seq_nll,
+        val_1_good_nll_mean,
+        val_1_bad_nll_mean,
     ) = _evaluate_split_nll(model, val_1_dataset, cfg, pad_token, device)
+
+    if cfg.compute_auroc:
+        metrics["train_auroc"] = compute_auroc_from_good_bad_nll(
+            train_good_seq_nll,
+            train_bad_seq_nll,
+        )
+        metrics["val_auroc"] = compute_auroc_from_good_bad_nll(
+            val_good_seq_nll,
+            val_bad_seq_nll,
+        )
+        metrics["val_1_auroc"] = compute_auroc_from_good_bad_nll(
+            val_1_good_seq_nll,
+            val_1_bad_seq_nll,
+        )
+
+    if not cfg.full_tracking:
+        return metrics
+
+    metrics["train_good_seq_nll"] = train_good_seq_nll
+    metrics["train_bad_seq_nll"] = train_bad_seq_nll
+    metrics["train_good_nll_mean"] = train_good_nll_mean
+    metrics["train_bad_nll_mean"] = train_bad_nll_mean
+    metrics["val_good_seq_nll"] = val_good_seq_nll
+    metrics["val_bad_seq_nll"] = val_bad_seq_nll
+    metrics["val_good_nll_mean"] = val_good_nll_mean
+    metrics["val_bad_nll_mean"] = val_bad_nll_mean
+    metrics["val_1_good_seq_nll"] = val_1_good_seq_nll
+    metrics["val_1_bad_seq_nll"] = val_1_bad_seq_nll
+    metrics["val_1_good_nll_mean"] = val_1_good_nll_mean
+    metrics["val_1_bad_nll_mean"] = val_1_bad_nll_mean
 
     metrics["dn_mean_token_likelihood"] = compute_mean_token_likelihood(
         model,
@@ -236,12 +268,20 @@ def _evaluate_model(
     return metrics
 
 
-def _init_history(full_tracking: bool) -> Dict[str, List]:
+def _init_history(full_tracking: bool, compute_auroc: bool) -> Dict[str, List]:
     history: Dict[str, List] = {
         "iteration": [],
         "train_loss": [],
         "val_loss": [],
     }
+    if compute_auroc:
+        history.update(
+            {
+                "train_auroc": [],
+                "val_auroc": [],
+                "val_1_auroc": [],
+            }
+        )
     if not full_tracking:
         return history
 
@@ -269,6 +309,11 @@ def _append_history(history: Dict[str, List], iteration: int, metrics: Dict[str,
     history["iteration"].append(iteration)
     history["train_loss"].append(metrics["train_loss"])
     history["val_loss"].append(metrics["val_loss"])
+
+    if "train_auroc" in history:
+        history["train_auroc"].append(metrics["train_auroc"])
+        history["val_auroc"].append(metrics["val_auroc"])
+        history["val_1_auroc"].append(metrics["val_1_auroc"])
 
     if "train_good_nll_mean" not in history:
         return
@@ -304,6 +349,8 @@ def _save_artifacts(
         full_tracking=cfg.full_tracking,
         full_eval_loss=cfg.full_eval_loss,
     )
+    if cfg.compute_auroc:
+        save_auroc_figure(history, image_dir / "auroc_history.png")
     if cfg.full_tracking:
         save_violin_history(history, image_dir / "violin_history.png")
     history_json_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
@@ -481,7 +528,7 @@ def main(cfg: Config) -> None:
     image_dir.mkdir(parents=True, exist_ok=True)
     history_json_path.parent.mkdir(parents=True, exist_ok=True)
 
-    history = _init_history(cfg.full_tracking)
+    history = _init_history(cfg.full_tracking, cfg.compute_auroc)
     eval_generator = torch.Generator().manual_seed(cfg.seed)
     use_kl_loss = cfg.reint and float(cfg.lambda_kl) != 0.0
 

@@ -82,6 +82,51 @@ def save_main_figure(
     plt.close(fig)
 
 
+def save_auroc_figure(history: Dict[str, List], output_path: Path) -> None:
+    iterations = history["iteration"]
+    if not iterations or "train_auroc" not in history:
+        return
+
+    panel_specs = [("Train AUROC", history["train_auroc"], "tab:blue")]
+    if "val_auroc" in history and _valid_series(history["val_auroc"]):
+        panel_specs.append(("Val AUROC", history["val_auroc"], "tab:orange"))
+    if "val_1_auroc" in history and _valid_series(history["val_1_auroc"]):
+        panel_specs.append(("Val 1 AUROC", history["val_1_auroc"], "tab:green"))
+
+    fig, axes = plt.subplots(
+        len(panel_specs),
+        1,
+        figsize=(10, 4.2 * len(panel_specs)),
+        squeeze=False,
+        sharex=True,
+    )
+
+    for row_idx, (title, values, color) in enumerate(panel_specs):
+        ax = axes[row_idx][0]
+        ax.plot(iterations, values, marker="o", color=color, label=title)
+        valid_values = [float(value) for value in values if value == value]
+        if valid_values:
+            ymin = min(valid_values)
+            ymax = max(valid_values)
+            if ymax - ymin < 1e-6:
+                pad = 0.02
+            else:
+                pad = max(0.01, 0.15 * (ymax - ymin))
+            ax.set_ylim(max(0.0, ymin - pad), min(1.0, ymax + pad))
+        else:
+            ax.set_ylim(0.0, 1.0)
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center")
+        ax.set_title(title)
+        ax.set_ylabel("AUROC")
+        ax.grid(alpha=0.3)
+        ax.legend(loc="best")
+
+    axes[-1][0].set_xlabel("Iteration")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _style_violin(parts, color: str) -> None:
     for body in parts.get("bodies", []):
         body.set_facecolor(color)
@@ -92,6 +137,33 @@ def _style_violin(parts, color: str) -> None:
         if artist is not None:
             artist.set_color("black")
             artist.set_linewidth(0.8)
+
+
+def _select_evenly_spaced_indices(n_values: int, max_points: int = 10) -> List[int]:
+    if n_values <= 0:
+        return []
+    if n_values <= max_points:
+        return list(range(n_values))
+
+    selected = {0, n_values - 1}
+    remaining = max_points - 2
+    for step_idx in range(1, remaining + 1):
+        position = step_idx * (n_values - 1) / (remaining + 1)
+        selected.add(int(round(position)))
+
+    ordered = sorted(selected)
+    while len(ordered) < max_points:
+        for candidate in range(n_values):
+            if candidate not in selected:
+                selected.add(candidate)
+                ordered = sorted(selected)
+                if len(ordered) == max_points:
+                    break
+
+    if len(ordered) > max_points:
+        ordered = ordered[: max_points - 1] + [n_values - 1]
+
+    return ordered
 
 
 def _plot_violin_panel(ax, iterations: List[int], good_history: List[List[float]], bad_history: List[List[float]], title: str) -> None:
@@ -123,6 +195,8 @@ def save_violin_history(history: Dict[str, List], output_path: Path) -> None:
     iterations = history["iteration"]
     if not iterations:
         return
+    selected_indices = _select_evenly_spaced_indices(len(iterations), max_points=10)
+    selected_iterations = [iterations[idx] for idx in selected_indices]
 
     panel_specs = [
         ("Train", history["train_good_seq_nll"], history["train_bad_seq_nll"]),
@@ -134,7 +208,13 @@ def save_violin_history(history: Dict[str, List], output_path: Path) -> None:
 
     fig, axes = plt.subplots(len(panel_specs), 1, figsize=(14, 4.5 * len(panel_specs)), squeeze=False)
     for row_idx, (title, good_history, bad_history) in enumerate(panel_specs):
-        _plot_violin_panel(axes[row_idx][0], iterations, good_history, bad_history, title)
+        _plot_violin_panel(
+            axes[row_idx][0],
+            selected_iterations,
+            [good_history[idx] for idx in selected_indices],
+            [bad_history[idx] for idx in selected_indices],
+            title,
+        )
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=140, bbox_inches="tight")

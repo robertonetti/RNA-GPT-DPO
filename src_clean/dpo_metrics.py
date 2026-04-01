@@ -4,6 +4,61 @@ from typing import List
 
 import torch
 
+
+def _safe_trapezoid(x_values: List[float], y_values: List[float]) -> float:
+    if len(x_values) < 2 or len(x_values) != len(y_values):
+        return float("nan")
+    area = 0.0
+    for idx in range(1, len(x_values)):
+        dx = float(x_values[idx]) - float(x_values[idx - 1])
+        area += dx * (float(y_values[idx]) + float(y_values[idx - 1])) * 0.5
+    return float(area)
+
+
+def compute_auroc_from_good_bad_nll(good_nll: List[float], bad_nll: List[float]) -> float:
+    labels: List[int] = []
+    scores: List[float] = []
+
+    for value in good_nll:
+        numeric = float(value)
+        if numeric == numeric:
+            labels.append(1)
+            scores.append(-numeric)
+    for value in bad_nll:
+        numeric = float(value)
+        if numeric == numeric:
+            labels.append(0)
+            scores.append(-numeric)
+
+    if len(labels) == 0 or len(labels) != len(scores):
+        return float("nan")
+
+    positives = sum(1 for label in labels if label == 1)
+    negatives = sum(1 for label in labels if label == 0)
+    if positives == 0 or negatives == 0:
+        return float("nan")
+
+    ranked = sorted(zip(scores, labels), key=lambda item: item[0], reverse=True)
+    tpr: List[float] = [0.0]
+    fpr: List[float] = [0.0]
+    tp = 0
+    fp = 0
+    index = 0
+
+    while index < len(ranked):
+        score_value = ranked[index][0]
+        while index < len(ranked) and ranked[index][0] == score_value:
+            if ranked[index][1] == 1:
+                tp += 1
+            else:
+                fp += 1
+            index += 1
+        tpr.append(tp / positives)
+        fpr.append(fp / negatives)
+
+    return _safe_trapezoid(fpr, tpr)
+
+
 def get_logprobs(logits: torch.Tensor, labels: torch.Tensor, pad_token: int) -> torch.Tensor:
     log_probs = torch.log_softmax(logits, dim=-1)
     token_logps = torch.gather(log_probs, dim=2, index=labels.unsqueeze(2)).squeeze(2)

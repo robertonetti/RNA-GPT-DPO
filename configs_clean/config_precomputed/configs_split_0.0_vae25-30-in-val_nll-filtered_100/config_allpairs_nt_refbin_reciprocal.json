@@ -15,7 +15,7 @@
   "image_dir": "images_dpo_precomputed/split_0.0_vae25-30-in-val_nll-filtered_100/allpairs_nt_refbin_reciprocal/clean",
   "history_json_path": "images_dpo_precomputed/split_0.0_vae25-30-in-val_nll-filtered_100/allpairs_nt_refbin_reciprocal/clean/history.json",
   "block_size": 198,
-  "batch_size": 4096,
+  "batch_size": 2048,
   "learning_rate": 1e-05,
   "max_iterations": 100000000,
   "beta": 0.3,
@@ -35,6 +35,7 @@
   "metrics_batch_size": 256,
   "dn_eval_subset_size": 800,
   "lambda_kl": 0.0,
-  "full_eval_loss": true,
-  "eval_loss_batch_size": 128
+  "full_eval_loss": false,
+  "eval_loss_batch_size": 10000,
+  "compute_auroc": true
 }

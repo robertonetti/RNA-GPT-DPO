@@ -53,6 +53,7 @@ class Config:
 
     full_tracking: bool = False
     full_eval_loss: bool = True
+    compute_auroc: bool = False
     eval_pair_batch_size: int = 256
     eval_loss_batch_size: int = 256
     metrics_batch_size: int = 256
