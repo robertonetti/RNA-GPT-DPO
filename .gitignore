@@ -17,3 +17,4 @@ output_plots/
 .codex
 run_dpo.sh
 notebooks/nll_vs_distance_train_scatter_density_hist_thresholds.png
+configs_clean/configs_precomputed_reint_dkl/
