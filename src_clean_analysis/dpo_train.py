@@ -9,6 +9,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
@@ -33,7 +34,8 @@ from src_clean_analysis.dpo_metrics import (
     compute_mean_token_likelihood,
     compute_preference_loss,
     compute_preference_loss_from_batch_in_chunks,
-    compute_dpo_prefactors,
+    compute_dpo_prefactors_from_drift,
+    compute_sequence_logprobs,
     compute_sequence_nll,
     mean_distance_to_reference,
     mean_distance_within,
@@ -278,7 +280,10 @@ def _evaluate_model(
 
 
 ANALYSIS_KEYS = (
-    "prefactor",
+    "prefactor_mean",
+    "prefactor_median",
+    "prefactor_p99",
+    "prefactor_train_auroc",
     "sample_pairwise_dist",
     "sample_pairwise_dist_mean",
     "sample_pairwise_dist_std",
@@ -288,36 +293,71 @@ ANALYSIS_KEYS = (
 )
 
 
-def _run_analysis(
+def _run_drift_analysis(
     model,
-    analysis_pairs: Dict[str, torch.Tensor] | None,
-    positive_data: torch.Tensor,
+    train_pairs: PreferencePairDataset,
     cfg: Config,
     pad_token: int,
+    device: torch.device,
+    iteration: int,
+    drift_dir: Path,
+) -> Dict[str, Any]:
+    """Per-sequence drift on the whole train set, saved to disk, and DPO prefactor of every pair.
+
+    For every train sequence i:   d_i = log pi_theta(seq_i) - log pi_ref(seq_i)
+    For every train pair (w, l):  sigma_wl = sigma(-beta * (d_w - d_l))
+
+    The drift of all good and bad sequences is saved in one file per evaluation
+    iteration, so the prefactor of any pair can be rebuilt offline.
+    """
+    batch_size = max(1, cfg.analysis_logp_batch_size)
+    logp_good = compute_sequence_logprobs(
+        model, train_pairs.good_data, train_pairs.good_labels, pad_token, device, batch_size
+    )
+    logp_bad = compute_sequence_logprobs(
+        model, train_pairs.bad_data, train_pairs.bad_labels, pad_token, device, batch_size
+    )
+    d_good = logp_good - train_pairs.ref_good_logps
+    d_bad = logp_bad - train_pairs.ref_bad_logps
+
+    np.savez(
+        drift_dir / f"drift_iter{iteration}.npz",
+        iteration=iteration,
+        beta=cfg.beta,
+        d_good=d_good.numpy(),
+        d_bad=d_bad.numpy(),
+        logp_good=logp_good.numpy(),
+        logp_bad=logp_bad.numpy(),
+    )
+
+    prefactor = compute_dpo_prefactors_from_drift(
+        d_good, d_bad, train_pairs.pair_good_idx, train_pairs.pair_bad_idx, cfg.beta
+    )
+    # Train AUROC: how well log pi_theta separates good from bad train sequences.
+    train_auroc = compute_auroc_from_good_bad_nll((-logp_good).tolist(), (-logp_bad).tolist())
+
+    return {
+        # Full distribution (one value per pair): kept in memory for plotting only,
+        # never written to history.json (millions of values).
+        "prefactor_all": prefactor.numpy().astype(np.float16),
+        "prefactor_mean": float(prefactor.mean()),
+        "prefactor_median": float(prefactor.median()),
+        "prefactor_p99": float(np.percentile(prefactor.numpy(), 99)),
+        "prefactor_train_auroc": train_auroc,
+    }
+
+
+def _run_analysis(
+    model,
+    positive_data: torch.Tensor,
+    cfg: Config,
     start_token: int,
     vocab_size: int,
     device: torch.device,
     iteration: int,
 ) -> Dict[str, Any]:
-    """DPO prefactor on a fixed pair subsample + diversity/distance of model samples."""
+    """Diversity/distance of model samples."""
     metrics: Dict[str, Any] = {}
-
-    if analysis_pairs is None:
-        metrics["prefactor"] = []
-    else:
-        metrics["prefactor"] = compute_dpo_prefactors(
-            model,
-            analysis_pairs["good_data"],
-            analysis_pairs["good_labels"],
-            analysis_pairs["bad_data"],
-            analysis_pairs["bad_labels"],
-            analysis_pairs["ref_good_logps"],
-            analysis_pairs["ref_bad_logps"],
-            beta=cfg.beta,
-            pad_token=pad_token,
-            device=device,
-            batch_size=max(1, cfg.metrics_batch_size),
-        ).tolist()
 
     generator = torch.Generator(device=device).manual_seed(cfg.seed + iteration)
     samples = sample_sequences(
@@ -418,6 +458,8 @@ def _save_artifacts(
     image_dir: Path,
     history_json_path: Path,
     cfg: Config,
+    prefactor_history: List[np.ndarray],
+    n_train_pairs: int,
 ) -> None:
     save_main_figure(
         history,
@@ -434,10 +476,12 @@ def _save_artifacts(
     if not cfg.reint:
         save_distribution_violin(
             iterations,
-            history["prefactor"],
+            prefactor_history,
             image_dir / "prefactor_violin.png",
-            title=f"DPO prefactor sigma(beta*(r_l - r_w)) on {cfg.analysis_n_pairs} train pairs",
+            title=f"DPO prefactor sigma(beta*(r_l - r_w)) on all {n_train_pairs} train pairs (beta={cfg.beta})",
             ylabel="Prefactor",
+            show_p99=True,
+            top_labels=[f"AUC={value:.3f}" for value in history["prefactor_train_auroc"]],
             color="tab:purple",
             max_points=cfg.analysis_max_violins,
         )
@@ -445,8 +489,8 @@ def _save_artifacts(
         iterations,
         history["sample_pairwise_dist"],
         image_dir / "sample_pairwise_dist_violin.png",
-        title=f"Mean Hamming distance within {cfg.analysis_n_samples} model samples",
-        ylabel="Hamming distance",
+        title=f"Mean divergence within {cfg.analysis_n_samples} model samples",
+        ylabel="Divergence (Hamming / length)",
         color="tab:blue",
         max_points=cfg.analysis_max_violins,
     )
@@ -454,8 +498,8 @@ def _save_artifacts(
         iterations,
         history["sample_to_positive_dist"],
         image_dir / "sample_to_positive_dist_violin.png",
-        title="Mean Hamming distance between model samples and DT+ sequences",
-        ylabel="Hamming distance",
+        title="Mean divergence between model samples and DT+ sequences",
+        ylabel="Divergence (Hamming / length)",
         color="tab:green",
         max_points=cfg.analysis_max_violins,
     )
@@ -634,21 +678,22 @@ def main(cfg: Config) -> None:
     image_dir.mkdir(parents=True, exist_ok=True)
     history_json_path.parent.mkdir(parents=True, exist_ok=True)
 
-    analysis_pairs = None
+    # Per-sequence drift files (one per evaluation iteration) live next to the images.
+    # The reference log-probs and the pair list are saved once, so that the
+    # prefactor of every pair can be rebuilt offline from the drift files.
+    drift_dir = image_dir / "sequence_drift"
+    drift_dir.mkdir(parents=True, exist_ok=True)
     if not cfg.reint:
-        pair_generator = torch.Generator().manual_seed(cfg.seed)
-        n_pairs = min(cfg.analysis_n_pairs, len(train_pairs))
-        pair_idx = torch.randperm(len(train_pairs), generator=pair_generator)[:n_pairs]
-        good_idx = train_pairs.pair_good_idx.index_select(0, pair_idx)
-        bad_idx = train_pairs.pair_bad_idx.index_select(0, pair_idx)
-        analysis_pairs = {
-            "good_data": train_pairs.good_data.index_select(0, good_idx),
-            "good_labels": train_pairs.good_labels.index_select(0, good_idx),
-            "bad_data": train_pairs.bad_data.index_select(0, bad_idx),
-            "bad_labels": train_pairs.bad_labels.index_select(0, bad_idx),
-            "ref_good_logps": train_pairs.ref_good_logps.index_select(0, good_idx),
-            "ref_bad_logps": train_pairs.ref_bad_logps.index_select(0, bad_idx),
-        }
+        np.savez(
+            drift_dir / "reference_and_pairs.npz",
+            ref_logp_good=train_pairs.ref_good_logps.numpy(),
+            ref_logp_bad=train_pairs.ref_bad_logps.numpy(),
+            pair_good_idx=train_pairs.pair_good_idx.numpy(),
+            pair_bad_idx=train_pairs.pair_bad_idx.numpy(),
+            beta=cfg.beta,
+        )
+    # Full prefactor distribution at each evaluation iteration (float16, plotting only).
+    prefactor_history: List[np.ndarray] = []
 
     positive_path = resolve_path(
         project_dir,
@@ -679,16 +724,24 @@ def main(cfg: Config) -> None:
         metrics.update(
             _run_analysis(
                 model,
-                analysis_pairs,
                 positive_data,
                 cfg,
-                pad_token,
                 start_token,
                 vocab_size,
                 device,
                 iteration,
             )
         )
+        if cfg.reint:
+            # Reint has no reference model in the loss: no drift / prefactor.
+            metrics.update({"prefactor_mean": float("nan"), "prefactor_median": float("nan"),
+                            "prefactor_p99": float("nan"), "prefactor_train_auroc": float("nan")})
+        else:
+            drift_metrics = _run_drift_analysis(
+                model, train_pairs, cfg, pad_token, device, iteration, drift_dir
+            )
+            prefactor_history.append(drift_metrics.pop("prefactor_all"))
+            metrics.update(drift_metrics)
         return metrics
 
     eval_iterations = set(analysis_eval_iterations(cfg.max_iterations))
@@ -700,7 +753,7 @@ def main(cfg: Config) -> None:
     model.eval()
     baseline = evaluate(0)
     _append_history(history, 0, baseline)
-    _save_artifacts(history, image_dir, history_json_path, cfg)
+    _save_artifacts(history, image_dir, history_json_path, cfg, prefactor_history, len(train_pairs))
 
     progress_bar = tqdm(total=cfg.max_iterations, desc="Iterations")
     global_iteration = 0
@@ -770,15 +823,16 @@ def main(cfg: Config) -> None:
             model.eval()
             metrics = evaluate(global_iteration)
             _append_history(history, global_iteration, metrics)
-            _save_artifacts(history, image_dir, history_json_path, cfg)
+            _save_artifacts(history, image_dir, history_json_path, cfg, prefactor_history, len(train_pairs))
 
             checkpoint_path = checkpoint_dir / f"model_iter{global_iteration}.pt"
             torch.save(model.state_dict(), checkpoint_path)
             print(
                 f"iter={global_iteration} epoch={epoch} "
                 f"train={metrics['train_loss']:.6f} val={metrics['val_loss']:.6f} "
-                f"within={metrics['sample_pairwise_dist_mean']:.2f}+-{metrics['sample_pairwise_dist_std']:.2f} "
-                f"to_pos={metrics['sample_to_positive_dist_mean']:.2f}+-{metrics['sample_to_positive_dist_std']:.2f}"
+                f"within={metrics['sample_pairwise_dist_mean']:.3f}+-{metrics['sample_pairwise_dist_std']:.3f} "
+                f"to_pos={metrics['sample_to_positive_dist_mean']:.3f}+-{metrics['sample_to_positive_dist_std']:.3f} "
+                f"prefactor_mean={metrics['prefactor_mean']:.3f} train_auc={metrics['prefactor_train_auroc']:.3f}"
             )
             model.train()
 

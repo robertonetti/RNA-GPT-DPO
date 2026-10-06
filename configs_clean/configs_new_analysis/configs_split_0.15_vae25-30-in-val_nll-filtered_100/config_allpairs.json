@@ -17,7 +17,7 @@
   "block_size": 198,
   "batch_size": 2048,
   "learning_rate": 1e-05,
-  "max_iterations": 100000000,
+  "max_iterations": 50000,
   "beta": 0.3,
   "reint": false,
   "lambda_reint": 1.0,

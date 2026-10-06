@@ -33,7 +33,7 @@ class Config:
 
     batch_size: int = 128
     learning_rate: float = 1e-4
-    max_iterations: int = 1000
+    max_iterations: int = 50000
     beta: float = 0.3
 
     reint: bool = False
@@ -59,8 +59,10 @@ class Config:
     dn_eval_subset_size: int | None = 800
 
     # Analysis: evaluation happens only at the iterations returned by
-    # analysis_eval_iterations() (1, 5, 10, ..., 100, 150, ..., 1000, 1500, ...).
-    analysis_n_pairs: int = 1000
+    # analysis_eval_iterations() (1, 5, 10, 50, 100, 500, 1000, 5000, 10000, 50000).
+    # Batch size (eval mode, no gradients) used to score every train sequence
+    # when computing the per-sequence drift d = log pi_theta - log pi_ref.
+    analysis_logp_batch_size: int = 1024
     analysis_n_samples: int = 1000
     analysis_sample_batch_size: int = 1000
     analysis_temperature: float = 1.0
@@ -68,14 +70,12 @@ class Config:
     analysis_max_violins: int = 12
 
 
+ANALYSIS_EVAL_ITERATIONS = [1, 5, 10, 50, 100, 500, 1000, 5000, 10000, 50000]
+
+
 def analysis_eval_iterations(max_iterations: int) -> List[int]:
-    """Return [1, 5, 10, ..., 100, 150, ..., 1000, 1500, ..., 10000, 15000, ...] up to max_iterations."""
-    iterations = [1]
-    start, step, upper = 5, 5, 100
-    while start <= max_iterations:
-        iterations.extend(range(start, min(upper, max_iterations) + 1, step))
-        start, step, upper = upper + 10 * step, 10 * step, 10 * upper
-    return iterations
+    """Return the fixed evaluation iterations that do not exceed max_iterations."""
+    return [iteration for iteration in ANALYSIS_EVAL_ITERATIONS if iteration <= max_iterations]
 
 
 def _infer_full_tracking(overrides: Mapping[str, Any]) -> bool:

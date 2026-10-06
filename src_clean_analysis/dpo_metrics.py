@@ -367,23 +367,19 @@ def attach_ref_logprobs(
     )
 
 
-def compute_dpo_prefactors(
-    model,
-    good_data: torch.Tensor,
-    good_labels: torch.Tensor,
-    bad_data: torch.Tensor,
-    bad_labels: torch.Tensor,
-    ref_good_logps: torch.Tensor,
-    ref_bad_logps: torch.Tensor,
+def compute_dpo_prefactors_from_drift(
+    d_good: torch.Tensor,
+    d_bad: torch.Tensor,
+    pair_good_idx: torch.Tensor,
+    pair_bad_idx: torch.Tensor,
     beta: float,
-    pad_token: int,
-    device: torch.device,
-    batch_size: int,
 ) -> torch.Tensor:
-    """Per-pair DPO gradient prefactor sigma(beta * (r_l - r_w)), with r = log pi - log pi_ref."""
-    logps_w = compute_sequence_logprobs(model, good_data, good_labels, pad_token, device, batch_size)
-    logps_l = compute_sequence_logprobs(model, bad_data, bad_labels, pad_token, device, batch_size)
-    margin = (logps_w - ref_good_logps) - (logps_l - ref_bad_logps)
+    """Per-pair DPO gradient prefactor sigma(-beta * (d_w - d_l)), without the outer beta.
+
+    d = log pi_theta(seq) - log pi_ref(seq) is the per-sequence drift. A pair only
+    needs the drift of its two sequences, so all pairs are obtained by indexing.
+    """
+    margin = d_good.index_select(0, pair_good_idx) - d_bad.index_select(0, pair_bad_idx)
     return torch.sigmoid(-beta * margin)
 
 
@@ -429,8 +425,8 @@ def hamming_distance_matrix(
 
 
 def mean_distance_within(samples: torch.Tensor, vocab_size: int, device: torch.device) -> torch.Tensor:
-    """For each sequence, mean Hamming distance to all the other sequences of the sample."""
-    distances = hamming_distance_matrix(samples, samples, vocab_size, device)
+    """For each sequence, mean divergence (Hamming / length) to all the other sequences of the sample."""
+    distances = hamming_distance_matrix(samples, samples, vocab_size, device) / samples.size(1)
     return distances.sum(dim=1) / max(samples.size(0) - 1, 1)
 
 
@@ -440,5 +436,5 @@ def mean_distance_to_reference(
     vocab_size: int,
     device: torch.device,
 ) -> torch.Tensor:
-    """For each sampled sequence, mean Hamming distance to all reference sequences."""
-    return hamming_distance_matrix(samples, reference, vocab_size, device).mean(dim=1)
+    """For each sampled sequence, mean divergence (Hamming / length) to all reference sequences."""
+    return (hamming_distance_matrix(samples, reference, vocab_size, device) / samples.size(1)).mean(dim=1)

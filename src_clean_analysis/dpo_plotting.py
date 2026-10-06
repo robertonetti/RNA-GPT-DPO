@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def _valid_series(values: List[float]) -> bool:
@@ -127,16 +128,43 @@ def save_auroc_figure(history: Dict[str, List], output_path: Path) -> None:
     plt.close(fig)
 
 
-def _style_violin(parts, color: str) -> None:
-    for body in parts.get("bodies", []):
-        body.set_facecolor(color)
-        body.set_edgecolor("black")
-        body.set_alpha(0.4)
-    for key in ("cmins", "cmaxes", "cbars", "cmedians"):
-        artist = parts.get(key)
-        if artist is not None:
-            artist.set_color("black")
-            artist.set_linewidth(0.8)
+def _shared_bin_edges(distributions: List[List[float]], n_bins: int = 40) -> np.ndarray:
+    """Equal-width bins spanning the range of all the given distributions."""
+    all_values = np.concatenate([np.asarray(values, dtype=float) for values in distributions])
+    low, high = float(all_values.min()), float(all_values.max())
+    if low == high:
+        low, high = low - 0.5, high + 0.5
+    return np.linspace(low, high, n_bins + 1)
+
+
+def _histogram_violin(
+    ax,
+    distributions: List[List[float]],
+    positions: List[float],
+    color: str,
+    width: float = 0.75,
+    n_bins: int = 40,
+    bin_edges: np.ndarray | None = None,
+) -> np.ndarray:
+    """Draw each distribution as a symmetric vertical histogram ("histogram violin").
+
+    Unlike a violin plot there is no kernel density fit: the shape is the raw
+    histogram, mirrored around the x position. All distributions share the same
+    bins; each one is scaled so that its tallest bin spans the full width.
+    A black tick marks the median. Returns the bin edges used.
+    """
+    if bin_edges is None:
+        bin_edges = _shared_bin_edges(distributions, n_bins)
+    bin_heights = np.diff(bin_edges)
+
+    for pos, values in zip(positions, distributions):
+        counts, _ = np.histogram(values, bins=bin_edges)
+        half_widths = 0.5 * width * counts / max(counts.max(), 1)
+        ax.barh(bin_edges[:-1], 2 * half_widths, height=bin_heights, left=pos - half_widths,
+                align="edge", color=color, alpha=0.4, edgecolor=color, linewidth=0.3)
+        median = float(np.median(values))
+        ax.hlines(median, pos - 0.5 * width, pos + 0.5 * width, color="black", linewidth=0.8)
+    return bin_edges
 
 
 def _select_evenly_spaced_indices(n_values: int, max_points: int = 10) -> List[int]:
@@ -175,10 +203,10 @@ def _plot_violin_panel(ax, iterations: List[int], good_history: List[List[float]
         return
 
     positions = list(range(len(iterations)))
-    good_parts = ax.violinplot(good_history, positions=positions, widths=0.75, showmedians=True)
-    bad_parts = ax.violinplot(bad_history, positions=positions, widths=0.75, showmedians=True)
-    _style_violin(good_parts, "tab:green")
-    _style_violin(bad_parts, "tab:red")
+    # Good and bad share the same bins so their histograms are directly comparable.
+    bin_edges = _shared_bin_edges(good_history + bad_history)
+    _histogram_violin(ax, good_history, positions, "tab:green", bin_edges=bin_edges)
+    _histogram_violin(ax, bad_history, positions, "tab:red", bin_edges=bin_edges)
 
     ax.plot([], [], color="tab:green", linewidth=8, alpha=0.4, label="Good")
     ax.plot([], [], color="tab:red", linewidth=8, alpha=0.4, label="Bad")
@@ -229,22 +257,45 @@ def save_distribution_violin(
     ylabel: str,
     color: str = "tab:blue",
     max_points: int = 12,
+    show_p99: bool = False,
+    top_labels: List[str] | None = None,
 ) -> None:
-    """Violin plot of one distribution per iteration, max_points equispaced iterations. Overwrites output_path."""
-    valid = [(it, values) for it, values in zip(iterations, distributions) if len(values) > 0]
+    """Histogram violin (see _histogram_violin) of one distribution per iteration. Overwrites output_path.
+
+    With show_p99=True a short red bar marks the 99th percentile of each distribution.
+    top_labels (one string per iteration, e.g. "AUC=0.81") are written above each histogram.
+    """
+    labels = top_labels if top_labels is not None else [None] * len(iterations)
+    valid = [
+        (it, values, label)
+        for it, values, label in zip(iterations, distributions, labels)
+        if len(values) > 0
+    ]
     if not valid:
         return
     selected = _select_evenly_spaced_indices(len(valid), max_points=max_points)
     selected_iterations = [valid[idx][0] for idx in selected]
-    selected_values = [valid[idx][1] for idx in selected]
+    selected_values = [np.asarray(valid[idx][1], dtype=np.float32) for idx in selected]
+    selected_labels = [valid[idx][2] for idx in selected]
 
     fig, ax = plt.subplots(figsize=(14, 5))
     positions = list(range(len(selected_iterations)))
-    parts = ax.violinplot(selected_values, positions=positions, widths=0.75, showmedians=True)
-    _style_violin(parts, color)
-    means = [sum(values) / len(values) for values in selected_values]
+    _histogram_violin(ax, selected_values, positions, color)
+    means = [float(values.mean()) for values in selected_values]
     ax.plot(positions, means, "o", color="black", markersize=4, label="Mean")
-    ax.set_title(title)
+    if show_p99:
+        p99 = [float(np.percentile(values, 99)) for values in selected_values]
+        ax.hlines(p99, [pos - 0.25 for pos in positions], [pos + 0.25 for pos in positions],
+                  color="tab:red", linewidth=2, label="99th percentile")
+    if any(label is not None for label in selected_labels):
+        # Text in axes-fraction y so it sits just above the plotting area.
+        for pos, label in zip(positions, selected_labels):
+            if label is not None:
+                ax.text(pos, 1.01, label, transform=ax.get_xaxis_transform(),
+                        ha="center", va="bottom", fontsize=8)
+        ax.set_title(title, pad=18)
+    else:
+        ax.set_title(title)
     ax.set_xlabel("Iteration")
     ax.set_ylabel(ylabel)
     ax.set_xticks(positions)
