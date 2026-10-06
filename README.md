@@ -1,5 +1,21 @@
 # RNA-GPT-DPO
 
+## Code versions: `src`, `src_precomputed`, `src_clean`
+
+The repository contains three successive versions of the DPO training code. Each one has its own entry point and SLURM launcher.
+
+| Folder | Entry point | Launcher | Description |
+|---|---|---|---|
+| `src/` | `DPO_train.py` | `run_dpo.sh` | Original version. The log-probabilities of the frozen reference model are recomputed at every batch, which makes it the slowest. |
+| `src_precomputed/` | `DPO_train_precomputed.py` | `run_dpo_precomputed.sh` | Copy of `src` with a single optimization: the reference-model log-probabilities are computed once at startup, attached to the pair datasets (`_attach_ref_logprobs_to_dataset`) and read from each batch. Much faster. Everything else matches `src`. |
+| `src_clean/` | `DPO_train_clean.py` | `run_dpo_clean.sh`, `run_dpo_clean_sequential.sh` | Cleaned-up rewrite of `src_precomputed`, about a third of the code. It keeps the precomputed reference log-probabilities, adds `torch.compile` and has simpler config, metrics and plotting. `dpo_logging.py`, `dpo_train_utils.py` and `Transformer_Reint.py` were removed. Configs are in `configs_clean/`. |
+
+Notes:
+
+- `src_clean/transformer.py` re-exports `GPTTransformer` from `src_precomputed`, so `src_clean` depends on `src_precomputed`. Do not delete it.
+- The models in `checkpoints/checkpoints_dpo_FINAL` were all trained with `src_clean`, using the configs in `configs_clean/config_precomputed/`.
+- The configuration section below documents `src/dpo_config.py`. `src_clean/dpo_config.py` has a reduced set of parameters.
+
 ## Criteri di nomenclatura dei file di pairing
 
 I file di pairing sono tutti in formato `.csv` e sono organizzati per split:
